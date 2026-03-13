@@ -1,58 +1,58 @@
-import { FiMenu, FiSearch } from "react-icons/fi";
-import { useState } from "react";
+import { FiMenu, FiSearch, FiEdit } from "react-icons/fi";
+import { useState, useEffect } from "react";
 import ChatWindow from "../Components/ChatWindow";
+import NewChatModal from "../Components/NewChatModal";
+import apiClient from "../api/apiClient";
 
 export default function Messages({ setMobileOpen }) {
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedUser, setSelectedUser] = useState(null);
-    // Dummy user list with recent messages
-    const [conversations] = useState([
-        {
-            id: 1,
-            name: "Sarah Connor",
-            lastMessage: "Are the new designs ready for review?",
-            time: "10:24 AM",
-            unread: 2,
-            isOnline: true,
-            hasConversation: true
-        },
-        {
-            id: 2,
-            name: "John Doe",
-            lastMessage: "I've uploaded the Q1 reports to the shared folder.",
-            time: "Yesterday",
-            unread: 0,
-            isOnline: false,
-            hasConversation: true
-        },
-        {
-            id: 3,
-            name: "Emily Davis",
-            lastMessage: "Sounds good, thanks!",
-            time: "Monday",
-            unread: 0,
-            isOnline: true,
-            hasConversation: true
-        },
-        {
-            id: 4,
-            name: "Mike Johnson",
-            lastMessage: "",
-            time: "",
-            unread: 0,
-            isOnline: false,
-            hasConversation: false
-        },
-        {
-            id: 5,
-            name: "Alex Turing",
-            lastMessage: "",
-            time: "",
-            unread: 0,
-            isOnline: true,
-            hasConversation: false
+    const [conversations, setConversations] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+
+    const fetchInbox = async () => {
+        try {
+            const response = await apiClient.get('/dm/inbox');
+            const data = response.data.data;
+            
+            const mappedConversations = data.map(msg => {
+                const partner = msg.senderId === currentUser.id ? msg.receiver : msg.sender;
+                
+                // Format time conditionally (Today vs Date)
+                const d = new Date(msg.createdAt);
+                const isToday = d.toDateString() === new Date().toDateString();
+                const timeStr = isToday 
+                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+                return {
+                    id: partner.id,
+                    name: partner.name,
+                    avatar: partner.avatar,
+                    lastMessage: msg.fileUrl ? (msg.fileType === 'audio' ? '🎤 Audio Message' : '📎 Attachment') : msg.message,
+                    time: timeStr,
+                    unread: msg.unreadCount,
+                    isOnline: false, // Could integrate with socket active users if available
+                    hasConversation: true
+                };
+            });
+            setConversations(mappedConversations);
+        } catch (error) {
+            console.error("Failed to fetch inbox:", error);
+        } finally {
+            setIsLoading(false);
         }
-    ]);
+    };
+
+    useEffect(() => {
+        fetchInbox();
+        // Optional: Poll every 10s for new messages/unread counts if websockets aren't wired up
+        // const interval = setInterval(fetchInbox, 10000);
+        // return () => clearInterval(interval);
+    }, []);
 
     const filteredConversations = conversations.filter(conv =>
         conv.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -72,16 +72,21 @@ export default function Messages({ setMobileOpen }) {
                         </button>
                         <h1 className="text-xl font-bold text-gray-900">Messages</h1>
                     </div>
-
-
                 </div>
 
                 {/* Content Area */}
                 <div className="flex-1 flex overflow-hidden">
                     {/* Sidebar / List Area */}
                     <div className={`w-full bg-white border-r border-gray-100 flex flex-col mx-auto sm:mx-0 sm:ml-0 lg:ml-2 ${selectedUser ? 'hidden' : 'flex'}`}>
-                        {/* Search Bar */}
-                        <div className="p-4 border-b border-gray-50">
+                        {/* Search Bar & New Chat */}
+                        <div className="p-4 border-b border-gray-50 space-y-3">
+                            <button
+                                onClick={() => setIsNewChatModalOpen(true)}
+                                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm"
+                            >
+                                <FiEdit className="w-4 h-4" />
+                                Start a New Conversation
+                            </button>
                             <div className="relative">
                                 <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                                 <input
@@ -106,9 +111,13 @@ export default function Messages({ setMobileOpen }) {
                                         >
                                             {/* Avatar */}
                                             <div className="relative shrink-0">
-                                                <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg ring-2 ring-white">
-                                                    {conv.name.charAt(0)}
-                                                </div>
+                                                {conv.avatar ? (
+                                                    <img src={conv.avatar} alt={conv.name} className="w-12 h-12 rounded-full object-cover ring-2 ring-white" />
+                                                ) : (
+                                                    <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg ring-2 ring-white">
+                                                        {conv.name?.charAt(0) || "U"}
+                                                    </div>
+                                                )}
                                                 {conv.isOnline && (
                                                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
                                                 )}
@@ -142,8 +151,10 @@ export default function Messages({ setMobileOpen }) {
                                 </div>
                             ) : (
                                 <div className="text-center py-12">
-                                    <p className="text-sm font-medium text-gray-900">No conversations found</p>
-                                    <p className="text-xs text-gray-500 mt-1">Try adjusting your search.</p>
+                                    <p className="text-sm font-medium text-gray-900">
+                                        {isLoading ? "Loading..." : "No conversations found"}
+                                    </p>
+                                    {!isLoading && <p className="text-xs text-gray-500 mt-1">Try adjusting your search or starting a new conversation.</p>}
                                 </div>
                             )}
                         </div>
@@ -153,10 +164,29 @@ export default function Messages({ setMobileOpen }) {
                         <ChatWindow
                             selectedUser={selectedUser}
                             setSelectedUser={setSelectedUser}
+                            onMessageSent={fetchInbox}
                         />
                     )}
                 </div>
             </div>
+
+            <NewChatModal 
+                isOpen={isNewChatModalOpen} 
+                onClose={() => setIsNewChatModalOpen(false)} 
+                onSelectUser={(user) => {
+                    setSelectedUser(user);
+                    // Add an optimistic entry to the inbox if it doesn't exist
+                    if (!conversations.find(c => c.id === user.id)) {
+                        setConversations(prev => [{
+                           ...user,
+                           lastMessage: "Start new conversation",
+                           time: "Just now",
+                           unread: 0,
+                           hasConversation: false
+                        }, ...prev]);
+                    }
+                }} 
+            />
         </main>
     );
 }

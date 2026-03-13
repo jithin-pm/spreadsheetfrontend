@@ -2,7 +2,11 @@ import { FiPaperclip, FiMic, FiImage, FiVideo, FiMoreVertical, FiPhone, FiVideo 
 import { useState, useRef, useEffect } from "react";
 import { PiPaperPlaneTiltBold } from "react-icons/pi";
 
-export default function ChatWindow({ selectedUser, setSelectedUser }) {
+import apiClient from "../api/apiClient";
+
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6043';
+
+export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSent }) {
     const [messageInput, setMessageInput] = useState("");
     const messagesEndRef = useRef(null);
 
@@ -13,49 +17,72 @@ export default function ChatWindow({ selectedUser, setSelectedUser }) {
     const audioChunksRef = useRef([]);
     const timerRef = useRef(null);
 
-    const [chatMessages, setChatMessages] = useState([
-        { id: 1, senderId: 1, text: "Hey! Just checking in on the designs.", time: "10:20 AM", isMine: false },
-        { id: 2, senderId: 'me', text: "Yes, they are almost ready. Give me 10 mins.", time: "10:22 AM", isMine: true },
-        { id: 3, senderId: 1, text: "Are the new designs ready for review?", time: "10:24 AM", isMine: false },
-    ]);
+    const [chatMessages, setChatMessages] = useState([]);
+    const [isSending, setIsSending] = useState(false);
+    
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-    useEffect(() => {
-        if (selectedUser) {
-            scrollToBottom();
+    const fetchMessages = async () => {
+        if (!selectedUser) return;
+        try {
+            const res = await apiClient.get(`/dm/${selectedUser.id}`);
+            const data = res.data.data.map(msg => {
+                const isMine = msg.senderId === currentUser.id;
+                const d = new Date(msg.createdAt);
+                return {
+                    id: msg.id,
+                    senderId: msg.senderId,
+                    text: msg.message || "",
+                    audioUrl: msg.fileType === 'audio' && msg.fileUrl ? `${BACKEND_URL}${msg.fileUrl}` : null,
+                    time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    isMine
+                };
+            });
+            setChatMessages(data);
+        } catch (error) {
+            console.error("Failed to fetch messages:", error);
         }
-    }, [chatMessages, selectedUser]);
-
-    const handleSendMessage = (e) => {
-        if (e) e.preventDefault();
-        if (!messageInput.trim()) return;
-
-        const newMessage = {
-            id: Date.now(),
-            senderId: 'me',
-            text: messageInput,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            isMine: true
-        };
-
-        setChatMessages([...chatMessages, newMessage]);
-        setMessageInput("");
     };
 
-    const handleSendAudioMessage = (audioUrl) => {
-        const newMessage = {
-            id: Date.now(),
-            senderId: 'me',
-            text: "",
-            audioUrl: audioUrl,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            isMine: true
-        };
+    useEffect(() => {
+        fetchMessages();
+    }, [selectedUser]);
 
-        setChatMessages([...chatMessages, newMessage]);
+    useEffect(() => {
+        scrollToBottom();
+    }, [chatMessages]);
+
+    const handleSendMessage = async (e) => {
+        if (e) e.preventDefault();
+        if (!messageInput.trim() || isSending) return;
+
+        setIsSending(true);
+        try {
+            const res = await apiClient.post(`/dm/${selectedUser.id}`, { message: messageInput });
+            const msg = res.data.data;
+            const d = new Date(msg.createdAt);
+            
+            const newMessage = {
+                id: msg.id,
+                senderId: msg.senderId,
+                text: msg.message,
+                time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isMine: true
+            };
+
+            setChatMessages(prev => [...prev, newMessage]);
+            setMessageInput("");
+            
+            if (onMessageSent) onMessageSent();
+        } catch (error) {
+            console.error("Failed to send message:", error);
+        } finally {
+            setIsSending(false);
+        }
     };
 
     // Recording Functions
@@ -72,10 +99,44 @@ export default function ChatWindow({ selectedUser, setSelectedUser }) {
                 }
             };
 
-            mediaRecorder.onstop = () => {
+            mediaRecorder.onstop = async () => {
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                const audioUrl = URL.createObjectURL(audioBlob);
-                handleSendAudioMessage(audioUrl);
+                
+                // Upload to backend
+                setIsSending(true);
+                try {
+                    const formData = new FormData();
+                    // Append blob as a file named "audio.webm"
+                    formData.append('audio', audioBlob, 'voice-message.webm');
+                    formData.append('duration', recordingTime);
+
+                    const res = await apiClient.post(`/dm/${selectedUser.id}/audio`, formData, {
+                        headers: {
+                            'Content-Type': 'multipart/form-data'
+                        }
+                    });
+
+                    const msg = res.data.data;
+                    const d = new Date(msg.createdAt);
+                    
+                    const newMessage = {
+                        id: msg.id,
+                        senderId: msg.senderId,
+                        text: "",
+                        audioUrl: msg.fileUrl ? `${BACKEND_URL}${msg.fileUrl}` : null,
+                        time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        isMine: true
+                    };
+
+                    setChatMessages(prev => [...prev, newMessage]);
+                    if (onMessageSent) onMessageSent();
+
+                } catch (error) {
+                    console.error("Failed to upload audio:", error);
+                    alert("Failed to send audio message.");
+                } finally {
+                    setIsSending(false);
+                }
             };
 
             mediaRecorder.start();
