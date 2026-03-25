@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { FiX, FiTrash2, FiSearch, FiChevronDown, FiCheck, FiColumns } from "react-icons/fi";
+import { FiX, FiTrash2, FiSearch, FiChevronDown, FiCheck, FiColumns, FiEye, FiEdit2 } from "react-icons/fi";
 import apiClient from "../api/apiClient";
 
 export default function ShareModal({ isOpen, onClose, sheetId }) {
@@ -21,11 +21,11 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     // Columns state
     const [columns, setColumns] = useState([]);
-    const [selectedColumnIds, setSelectedColumnIds] = useState([]);
+    const [columnAccess, setColumnAccess] = useState({}); // { [colId]: 'view' | 'edit' }
     const [showColumnSection, setShowColumnSection] = useState(false);
 
     // Edit column permissions for existing members
-    const [editingMemberColPerms, setEditingMemberColPerms] = useState(null); // { userId, allowedColumnIds }
+    const [editingMemberColPerms, setEditingMemberColPerms] = useState(null); // { userId, columnAccess }
 
     useEffect(() => {
         if (isOpen && sheetId) {
@@ -37,7 +37,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
             setSearchResults([]);
             setSelectedUser(null);
             setShowDropdown(false);
-            setSelectedColumnIds([]);
+            setColumnAccess({});
             setShowColumnSection(false);
             setEditingMemberColPerms(null);
         }
@@ -86,11 +86,13 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     const fetchColumns = async () => {
         try {
-            const response = await apiClient.get(`/admin/sheets/${sheetId}`);
+            const response = await apiClient.get(`/sheets/${sheetId}`);
             const cols = response.data.data.columns || [];
             setColumns(cols);
-            // Default: select all columns
-            setSelectedColumnIds(cols.map(c => c.id));
+            // Default: all columns set to 'edit'
+            const initialAccess = {};
+            cols.forEach(c => initialAccess[c.id] = 'edit');
+            setColumnAccess(initialAccess);
         } catch (err) {
             console.error("Error fetching columns:", err);
         }
@@ -100,7 +102,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         setLoading(true);
         setError("");
         try {
-            const response = await apiClient.get(`/admin/sheets/${sheetId}/permissions`);
+            const response = await apiClient.get(`/sheets/${sheetId}/permissions`);
             setMembers(response.data.data.sheetPermissions || []);
             setColumnPermissions(response.data.data.columnPermissions || []);
         } catch (err) {
@@ -116,26 +118,20 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         setSearchQuery(user.name + " (" + user.email + ")");
         setShowDropdown(false);
         setSearchResults([]);
-        // Show column section when user is selected
         setShowColumnSection(true);
-        // Default: all columns selected
-        setSelectedColumnIds(columns.map(c => c.id));
+        const initialAccess = {};
+        columns.forEach(c => initialAccess[c.id] = 'edit');
+        setColumnAccess(initialAccess);
     };
 
-    const toggleColumn = (colId) => {
-        setSelectedColumnIds(prev =>
-            prev.includes(colId)
-                ? prev.filter(id => id !== colId)
-                : [...prev, colId]
-        );
+    const setColPermission = (colId, p) => {
+        setColumnAccess(prev => ({ ...prev, [colId]: p }));
     };
 
-    const toggleAllColumns = () => {
-        if (selectedColumnIds.length === columns.length) {
-            setSelectedColumnIds([]);
-        } else {
-            setSelectedColumnIds(columns.map(c => c.id));
-        }
+    const setAllColPermissions = (p) => {
+        const next = {};
+        columns.forEach(c => next[c.id] = p);
+        setColumnAccess(next);
     };
 
     const handleShare = async () => {
@@ -144,15 +140,14 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         setSharing(true);
         setError("");
         try {
-            await apiClient.post(`/admin/sheets/${sheetId}/share`, {
+            await apiClient.post(`/sheets/${sheetId}/share`, {
                 email,
                 role,
-                allowedColumnIds: selectedColumnIds.length === columns.length ? undefined : selectedColumnIds
+                columnAccess
             });
             setSearchQuery("");
             setSelectedUser(null);
             setShowColumnSection(false);
-            setSelectedColumnIds(columns.map(c => c.id));
             fetchMembers();
         } catch (err) {
             console.error("Error sharing sheet:", err);
@@ -164,7 +159,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     const handleUpdateRole = async (userId, newRole) => {
         try {
-            await apiClient.put(`/admin/sheets/${sheetId}/permissions/${userId}`, { role: newRole });
+            await apiClient.put(`/sheets/${sheetId}/permissions/${userId}`, { role: newRole });
             fetchMembers();
         } catch (err) {
             console.error("Error updating role:", err);
@@ -174,7 +169,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     const handleRemove = async (userId) => {
         try {
-            await apiClient.delete(`/admin/sheets/${sheetId}/permissions/${userId}`);
+            await apiClient.delete(`/sheets/${sheetId}/permissions/${userId}`);
             fetchMembers();
         } catch (err) {
             console.error("Error removing access:", err);
@@ -184,39 +179,38 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     const handleEditMemberColumns = (userId) => {
         const existing = columnPermissions.find(cp => cp.userId === userId);
-        const allowed = existing?.allowedColumnIds || columns.map(c => c.id);
-        setEditingMemberColPerms({ userId, allowedColumnIds: Array.isArray(allowed) ? allowed : columns.map(c => c.id) });
+        let access = existing?.columnAccess;
+        if (!access || typeof access !== 'object') {
+            access = {};
+            columns.forEach(c => access[c.id] = 'edit');
+        }
+        setEditingMemberColPerms({ userId, columnAccess: access });
     };
 
-    const toggleMemberColumn = (colId) => {
+    const setMemberColPermission = (colId, p) => {
         if (!editingMemberColPerms) return;
         setEditingMemberColPerms(prev => ({
             ...prev,
-            allowedColumnIds: prev.allowedColumnIds.includes(colId)
-                ? prev.allowedColumnIds.filter(id => id !== colId)
-                : [...prev.allowedColumnIds, colId]
+            columnAccess: { ...prev.columnAccess, [colId]: p }
         }));
     };
 
-    const toggleAllMemberColumns = () => {
+    const setAllMemberColPermissions = (p) => {
         if (!editingMemberColPerms) return;
-        if (editingMemberColPerms.allowedColumnIds.length === columns.length) {
-            setEditingMemberColPerms(prev => ({ ...prev, allowedColumnIds: [] }));
-        } else {
-            setEditingMemberColPerms(prev => ({ ...prev, allowedColumnIds: columns.map(c => c.id) }));
-        }
+        const next = {};
+        columns.forEach(c => next[c.id] = p);
+        setEditingMemberColPerms(prev => ({ ...prev, columnAccess: next }));
     };
 
     const saveMemberColumnPermissions = async () => {
         if (!editingMemberColPerms) return;
         try {
-            // Find the member's email to re-share with updated column permissions
             const member = members.find(m => m.userId === editingMemberColPerms.userId);
             if (!member) return;
-            await apiClient.post(`/admin/sheets/${sheetId}/share`, {
+            await apiClient.post(`/sheets/${sheetId}/share`, {
                 email: member.User?.email,
                 role: member.role,
-                allowedColumnIds: editingMemberColPerms.allowedColumnIds
+                columnAccess: editingMemberColPerms.columnAccess
             });
             setEditingMemberColPerms(null);
             fetchMembers();
@@ -226,12 +220,14 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         }
     };
 
-    const getMemberColumnCount = (userId) => {
-        const cp = columnPermissions.find(p => p.userId === userId);
-        if (!cp || !cp.allowedColumnIds || !Array.isArray(cp.allowedColumnIds) || cp.allowedColumnIds.length === 0) {
-            return columns.length; // All columns (no restriction)
-        }
-        return cp.allowedColumnIds.length;
+    const getMemberColumnStatus = (userId) => {
+        const existing = columnPermissions.find(cp => cp.userId === userId);
+        const access = existing?.columnAccess || {};
+        const editCount = Object.values(access).filter(v => v === 'edit').length;
+        const viewCount = Object.values(access).filter(v => v === 'view').length;
+        if (editCount === columns.length) return "Full Edit";
+        if (viewCount === columns.length) return "Read Only";
+        return `${editCount} Edit, ${viewCount} View`;
     };
 
     if (!isOpen) return null;
@@ -241,8 +237,6 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         { value: "editor", label: "Can edit" },
         { value: "viewer", label: "Can view" }
     ];
-
-    const allColumnsSelected = selectedColumnIds.length === columns.length;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -342,49 +336,41 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                             <div className="flex items-center justify-between mb-3">
                                 <div className="flex items-center gap-2">
                                     <FiColumns className="w-4 h-4 text-blue-600" />
-                                    <h4 className="text-sm font-semibold text-gray-800">Column Access</h4>
+                                    <h4 className="text-sm font-semibold text-gray-800">Column Granular Access</h4>
                                 </div>
-                                <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full font-medium">
-                                    {selectedColumnIds.length}/{columns.length} selected
-                                </span>
-                            </div>
-                            <p className="text-xs text-gray-500 mb-3">
-                                Select which columns <strong>{selectedUser.name}</strong> can access:
-                            </p>
-
-                            {/* Select All */}
-                            <div
-                                onClick={toggleAllColumns}
-                                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors mb-1 border-b border-blue-100 pb-2"
-                            >
-                                <div className={`w-5 h-5 rounded flex items-center justify-center border-2 transition-colors shrink-0 ${
-                                    allColumnsSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
-                                }`}>
-                                    {allColumnsSelected && <FiCheck className="w-3.5 h-3.5 text-white" />}
+                                <div className="flex gap-1">
+                                    <button onClick={() => setAllColPermissions('view')} className="text-[10px] bg-white border border-gray-200 px-2 py-0.5 rounded hover:bg-gray-100">All View</button>
+                                    <button onClick={() => setAllColPermissions('edit')} className="text-[10px] bg-white border border-gray-200 px-2 py-0.5 rounded hover:bg-gray-100">All Edit</button>
                                 </div>
-                                <span className="text-sm font-semibold text-gray-700">Select All Columns</span>
                             </div>
 
-                            {/* Column List */}
-                            <div className="space-y-0.5 max-h-40 overflow-y-auto pr-1">
+                            {/* Column List with Toggle */}
+                            <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
                                 {columns.map((col) => {
-                                    const isSelected = selectedColumnIds.includes(col.id);
+                                    const p = columnAccess[col.id] || 'edit';
                                     return (
-                                        <div
-                                            key={col.id}
-                                            onClick={() => toggleColumn(col.id)}
-                                            className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                                                isSelected ? 'bg-blue-50 hover:bg-blue-100/70' : 'hover:bg-gray-50'
-                                            }`}
-                                        >
-                                            <div className={`w-5 h-5 rounded flex items-center justify-center border-2 transition-colors shrink-0 ${
-                                                isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
-                                            }`}>
-                                                {isSelected && <FiCheck className="w-3.5 h-3.5 text-white" />}
-                                            </div>
+                                        <div key={col.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100">
                                             <div className="flex items-center gap-2 min-w-0 flex-1">
                                                 <span className="text-sm text-gray-800 truncate">{col.name}</span>
-                                                <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase font-medium shrink-0">{col.type}</span>
+                                                <span className="text-[9px] bg-gray-100 text-gray-400 px-1 py-0.5 rounded uppercase font-medium shrink-0">{col.type}</span>
+                                            </div>
+                                            <div className="flex bg-gray-100 p-0.5 rounded-lg shrink-0">
+                                                <button
+                                                    onClick={() => setColPermission(col.id, 'view')}
+                                                    className={`px-2 py-1 rounded-md text-[10px] font-medium flex items-center gap-1 transition-all ${
+                                                        p === 'view' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                                    }`}
+                                                >
+                                                    <FiEye className="w-3 h-3" /> View
+                                                </button>
+                                                <button
+                                                    onClick={() => setColPermission(col.id, 'edit')}
+                                                    className={`px-2 py-1 rounded-md text-[10px] font-medium flex items-center gap-1 transition-all ${
+                                                        p === 'edit' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                                    }`}
+                                                >
+                                                    <FiEdit2 className="w-3 h-3" /> Edit
+                                                </button>
                                             </div>
                                         </div>
                                     );
@@ -411,7 +397,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                         ) : (
                             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                                 {members.map((member) => {
-                                    const colCount = getMemberColumnCount(member.userId);
+                                    const statusLabel = getMemberColumnStatus(member.userId);
                                     const isEditingCols = editingMemberColPerms?.userId === member.userId;
 
                                     return (
@@ -435,7 +421,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                                                                 title="Edit column access"
                                                             >
                                                                 <FiColumns className="w-3 h-3" />
-                                                                {colCount}/{columns.length} cols
+                                                                {statusLabel}
                                                             </button>
                                                         </div>
                                                     </div>
@@ -464,48 +450,42 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                                                 </div>
                                             </div>
 
-                                            {/* Inline column permissions editor for this member */}
+                                            {/* Inline column permissions editor */}
                                             {isEditingCols && (
                                                 <div className="px-3 pb-3 pt-1 border-t border-gray-50">
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <div className="flex items-center justify-between mb-2">
-                                                            <span className="text-xs font-semibold text-gray-600">Column Access</span>
-                                                            <span className="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full font-medium">
-                                                                {editingMemberColPerms.allowedColumnIds.length}/{columns.length}
-                                                            </span>
-                                                        </div>
-
-                                                        {/* Select All */}
-                                                        <div
-                                                            onClick={toggleAllMemberColumns}
-                                                            className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white cursor-pointer transition-colors mb-1"
-                                                        >
-                                                            <div className={`w-4 h-4 rounded flex items-center justify-center border-2 transition-colors shrink-0 ${
-                                                                editingMemberColPerms.allowedColumnIds.length === columns.length ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
-                                                            }`}>
-                                                                {editingMemberColPerms.allowedColumnIds.length === columns.length && <FiCheck className="w-3 h-3 text-white" />}
+                                                            <span className="text-xs font-semibold text-gray-600">Edit Column Access</span>
+                                                            <div className="flex gap-1">
+                                                                <button onClick={() => setAllMemberColPermissions('view')} className="text-[9px] bg-white border border-gray-200 px-1.5 py-0.5 rounded">All View</button>
+                                                                <button onClick={() => setAllMemberColPermissions('edit')} className="text-[9px] bg-white border border-gray-200 px-1.5 py-0.5 rounded">All Edit</button>
                                                             </div>
-                                                            <span className="text-xs font-semibold text-gray-600">All</span>
                                                         </div>
 
-                                                        <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                                        <div className="space-y-1 max-h-32 overflow-y-auto mt-2">
                                                             {columns.map(col => {
-                                                                const checked = editingMemberColPerms.allowedColumnIds.includes(col.id);
+                                                                const p = editingMemberColPerms.columnAccess[col.id] || 'edit';
                                                                 return (
-                                                                    <div
-                                                                        key={col.id}
-                                                                        onClick={() => toggleMemberColumn(col.id)}
-                                                                        className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                                                                            checked ? 'bg-blue-50 hover:bg-blue-100/70' : 'hover:bg-white'
-                                                                        }`}
-                                                                    >
-                                                                        <div className={`w-4 h-4 rounded flex items-center justify-center border-2 transition-colors shrink-0 ${
-                                                                            checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
-                                                                        }`}>
-                                                                            {checked && <FiCheck className="w-3 h-3 text-white" />}
+                                                                    <div key={col.id} className="flex items-center justify-between gap-2 px-2 py-1.5 bg-white rounded border border-gray-100">
+                                                                        <span className="text-xs text-gray-700 truncate flex-1">{col.name}</span>
+                                                                        <div className="flex bg-gray-100 p-0.5 rounded shrink-0">
+                                                                            <button
+                                                                                onClick={() => setMemberColPermission(col.id, 'view')}
+                                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all ${
+                                                                                    p === 'view' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-500'
+                                                                                }`}
+                                                                            >
+                                                                                View
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => setMemberColPermission(col.id, 'edit')}
+                                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all ${
+                                                                                    p === 'edit' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-500'
+                                                                                }`}
+                                                                            >
+                                                                                Edit
+                                                                            </button>
                                                                         </div>
-                                                                        <span className="text-xs text-gray-700 truncate">{col.name}</span>
-                                                                        <span className="text-[9px] bg-gray-200 text-gray-500 px-1 py-0.5 rounded ml-auto shrink-0">{col.type}</span>
                                                                     </div>
                                                                 );
                                                             })}

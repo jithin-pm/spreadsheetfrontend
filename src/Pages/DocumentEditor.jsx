@@ -12,6 +12,8 @@ import { TbMathFunction } from "react-icons/tb";
 import apiClient from "../api/apiClient";
 import { formatCurrency, parseCurrencyInput, SUPPORTED_CURRENCIES, getCurrencySymbol } from "../utils/currencyUtils";
 import ShareModal from "../components/ShareModal";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 export default function DocumentEditor({ docName, setActivePath }) {
     const [sheetData, setSheetData] = useState(null);
@@ -19,6 +21,70 @@ export default function DocumentEditor({ docName, setActivePath }) {
     const [columns, setColumns] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
+
+    const [newColumnBgColor, setNewColumnBgColor] = useState(null);
+    const [newColumnIsRowColorSource, setNewColumnIsRowColorSource] = useState(false);
+    const [isRowColorPickerOpen, setIsRowColorPickerOpen] = useState(false);
+
+    const COLOR_PALETTE = [
+        { name: 'None', value: null },
+
+        // Reds
+        { name: 'Red', value: '#fee2e2' },
+        { name: 'Dark Red', value: '#fecaca' },
+        { name: 'Rose', value: '#ffe4e6' },
+
+        // Greens
+        { name: 'Green', value: '#dcfce7' },
+        { name: 'Dark Green', value: '#bbf7d0' },
+        { name: 'Mint', value: '#d1fae5' },
+
+        // Blues
+        { name: 'Blue', value: '#dbeafe' },
+        { name: 'Sky Blue', value: '#e0f2fe' },
+        { name: 'Indigo', value: '#e0e7ff' },
+
+        // Yellows
+        { name: 'Yellow', value: '#fef9c3' },
+        { name: 'Amber', value: '#fef3c7' },
+        { name: 'Light Gold', value: '#fef08a' },
+
+        // Oranges
+        { name: 'Orange', value: '#ffedd5' },
+        { name: 'Peach', value: '#ffe4cc' },
+        { name: 'Coral', value: '#ffd6d6' },
+
+        // Purples
+        { name: 'Purple', value: '#f3e8ff' },
+        { name: 'Lavender', value: '#ede9fe' },
+        { name: 'Violet', value: '#e9d5ff' },
+
+        // Pinks
+        { name: 'Pink', value: '#fce7f3' },
+        { name: 'Light Pink', value: '#fbcfe8' },
+        { name: 'Blush', value: '#ffe4e6' },
+
+        // Neutrals
+        { name: 'Gray', value: '#f3f4f6' },
+        { name: 'Cool Gray', value: '#e5e7eb' },
+        { name: 'Warm Gray', value: '#f5f5f4' },
+        { name: 'Slate', value: '#e2e8f0' },
+
+        // Extra UI tones
+        { name: 'Cyan', value: '#cffafe' },
+        { name: 'Teal', value: '#ccfbf1' },
+        { name: 'Lime', value: '#ecfccb' },
+        { name: 'Emerald', value: '#d1fae5' },
+    ];
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setAppliedSearchQuery(searchQuery);
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
 
     // Fetch sheet data from API
     const fetchSheetData = useCallback(async () => {
@@ -26,7 +92,8 @@ export default function DocumentEditor({ docName, setActivePath }) {
 
         setIsLoading(true);
         try {
-            const response = await apiClient.get(`/sheets/${docName}/data`);
+            const url = appliedSearchQuery ? `/sheets/${docName}/data?search=${encodeURIComponent(appliedSearchQuery)}` : `/sheets/${docName}/data`;
+            const response = await apiClient.get(url);
             const data = response.data.data;
 
             setSheetData(data.sheet);
@@ -44,13 +111,14 @@ export default function DocumentEditor({ docName, setActivePath }) {
         } finally {
             setIsLoading(false);
         }
-    }, [docName]);
+    }, [docName, appliedSearchQuery]);
 
     // Silent refresh — updates rows/columns without showing loading spinner
     const refreshFormulaValues = useCallback(async () => {
         if (!docName) return;
         try {
-            const response = await apiClient.get(`/sheets/${docName}/data`);
+            const url = appliedSearchQuery ? `/sheets/${docName}/data?search=${encodeURIComponent(appliedSearchQuery)}` : `/sheets/${docName}/data`;
+            const response = await apiClient.get(url);
             const data = response.data.data;
             setRows(data.grid);
             // Preserve existing column widths while updating column data
@@ -79,6 +147,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
     // Context Menu State
     const [activeColumnMenu, setActiveColumnMenu] = useState(null);
     const menuRef = useRef(null);
+    const rowColorPickerRef = useRef(null);
 
     // Cell Context Menu State
     const [activeCellMenu, setActiveCellMenu] = useState(null);
@@ -89,6 +158,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
         const handleClickOutside = (event) => {
             if (menuRef.current && !menuRef.current.contains(event.target)) {
                 setActiveColumnMenu(null);
+            }
+            if (rowColorPickerRef.current && !rowColorPickerRef.current.contains(event.target)) {
+                setIsRowColorPickerOpen(false);
             }
             if (cellMenuRef.current && !cellMenuRef.current.contains(event.target)) {
                 setActiveCellMenu(null);
@@ -145,7 +217,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
     const [newColumnName, setNewColumnName] = useState('');
     const [newColumnType, setNewColumnType] = useState('text');
     const [newColumnCurrencyCode, setNewColumnCurrencyCode] = useState('INR');
-    
+
     // Formula Builder State
     const [isFormulaModalOpen, setIsFormulaModalOpen] = useState(false);
     const [formulaString, setFormulaString] = useState('');
@@ -358,6 +430,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
     const columnTypes = [
         { id: 'text', icon: <span className="text-blue-500 font-serif text-lg">T</span>, name: 'Text', desc: 'Insert alpha numeric values in a cell' },
         { id: 'number', icon: <span className="text-blue-500 font-medium text-sm">123</span>, name: 'Number', desc: 'Insert numbers in a cell' },
+        { id: 'date', icon: <span className="text-blue-500 text-lg">📅</span>, name: 'Date', desc: 'Pick or type a date value' },
         { id: 'currency', icon: <span className="text-blue-500 text-lg">₹</span>, name: 'Currency', desc: 'Format number to currency' },
         { id: 'formula', icon: <span className="text-blue-500 italic font-serif text-lg">fx</span>, name: 'Formula', desc: 'Create formula for automatic calculation' },
         { id: 'multi_image', icon: <FiImage className="text-blue-500 w-5 h-5" />, name: 'Image', desc: 'Add multiple images in a cell' },
@@ -375,6 +448,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setNewColumnName(col.name);
         setNewColumnType(col.type);
         setNewColumnCurrencyCode(col.currencyCode || 'INR');
+        setNewColumnBgColor(col.bgColor || null);
+        const opts = typeof col.options === 'string' ? JSON.parse(col.options) : (col.options || {});
+        setNewColumnIsRowColorSource(opts.isRowColorSource || false);
         setEditingColId(col.id);
         setIsColumnModalOpen(true);
         setActiveColumnMenu(null);
@@ -396,24 +472,28 @@ export default function DocumentEditor({ docName, setActivePath }) {
             return;
         }
 
-        await saveColumnToBackend(newColumnName, newColumnType, editingColId);
+        await saveColumnToBackend(newColumnName, newColumnType, editingColId, undefined, newColumnBgColor, newColumnIsRowColorSource);
     };
 
-    const saveColumnToBackend = async (name, type, colId, formulaExpr = undefined) => {
+    const saveColumnToBackend = async (name, type, colId, formulaExpr = undefined, bgColor = null, isRowColorSource = false) => {
         try {
             const currencyPayload = type === 'currency' ? { currencyCode: newColumnCurrencyCode } : {};
+            const options = { isRowColorSource };
+
             if (colId) {
                 // Update existing column
-                await apiClient.put(`/admin/sheets/${docName}/columns/${colId}`, {
+                await apiClient.put(`/sheets/${docName}/columns/${colId}`, {
                     name,
                     type,
+                    bgColor,
+                    options,
                     ...currencyPayload,
                     ...(formulaExpr ? { formulaExpr } : {})
                 });
 
                 setColumns(cols => cols.map(c =>
                     c.id === colId
-                        ? { ...c, name, type, formulaExpr, ...currencyPayload }
+                        ? { ...c, name, type, formulaExpr, bgColor, options, ...currencyPayload }
                         : c
                 ));
 
@@ -421,10 +501,12 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 fetchSheetData();
             } else {
                 // Add new column
-                const response = await apiClient.post(`/admin/sheets/${docName}/columns`, {
+                const response = await apiClient.post(`/sheets/${docName}/columns`, {
                     name,
                     type,
                     width: 220,
+                    bgColor,
+                    options,
                     ...currencyPayload,
                     ...(formulaExpr ? { formulaExpr } : {})
                 });
@@ -445,10 +527,27 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setFormulaString('');
     };
 
+    const handleRowColorChange = async (color) => {
+        if (!focusedCell) {
+            alert("Please select a cell in the row you want to color.");
+            return;
+        }
+        const rowId = focusedCell.rowId;
+        try {
+            await apiClient.patch(`/sheets/${docName}/rows/${rowId}/color`, { rowColor: color });
+            setRows(currentRows => currentRows.map(row =>
+                row.id === rowId ? { ...row, rowColor: color } : row
+            ));
+        } catch (error) {
+            console.error("Error updating row color:", error);
+        }
+        setIsRowColorPickerOpen(false);
+    };
+
     // --- Column Menu Actions ---
     const handleDeleteColumn = async (colId) => {
         try {
-            await apiClient.delete(`/admin/sheets/${docName}/columns/${colId}`);
+            await apiClient.delete(`/sheets/${docName}/columns/${colId}`);
             setColumns(cols => cols.filter(c => c.id !== colId));
             // Clear any filter on the deleted column
             setColumnFilters(prev => {
@@ -476,7 +575,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
             const letter = String.fromCharCode(65 + columns.length); // A=65
             const colName = `Column ${letter}`;
 
-            await apiClient.post(`/admin/sheets/${docName}/columns`, {
+            await apiClient.post(`/sheets/${docName}/columns`, {
                 name: colName,
                 type: 'text',
                 width: 220,
@@ -497,6 +596,16 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 const cellB = b.cells?.find(c => c.columnId === colId);
                 const valA = cellA?.computedValue ?? cellA?.rawValue ?? '';
                 const valB = cellB?.computedValue ?? cellB?.rawValue ?? '';
+
+                // Date comparison for date columns
+                const colDef = columns.find(c => c.id === colId);
+                if (colDef?.type === 'date') {
+                    const dateA = new Date(valA);
+                    const dateB = new Date(valB);
+                    if (!isNaN(dateA) && !isNaN(dateB)) {
+                        return direction === 'asc' ? dateA - dateB : dateB - dateA;
+                    }
+                }
 
                 // Try numeric comparison first
                 const numA = parseFloat(valA);
@@ -611,6 +720,27 @@ export default function DocumentEditor({ docName, setActivePath }) {
             }
         } else if (colDef && colDef.type === 'currency') {
             finalValue = parseCurrencyInput(value);
+            // For currency, only update local state — save on blur to avoid race conditions
+            setRows(currentRows => currentRows.map(row => {
+                if (row.id === rowId) {
+                    return {
+                        ...row,
+                        cells: row.cells.map(cell => {
+                            if (cell.columnId === columnId) {
+                                return { ...cell, rawValue: finalValue, computedValue: finalValue };
+                            }
+                            return cell;
+                        })
+                    };
+                }
+                return row;
+            }));
+            return; // Don't send to API yet — handleCellBlur will save
+        } else if (colDef && colDef.type === 'date') {
+            // Allow empty value to clear, validate non-empty
+            if (value !== '' && isNaN(new Date(value).getTime())) {
+                return; // Reject invalid date
+            }
         }
 
         try {
@@ -646,7 +776,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
             console.error("Error saving cell:", error);
         }
     };
-    
+
     // --- Multi-Image Upload Logic ---
     const handleImageGalleryOpen = (rowId, colId, value) => {
         let parsedImages = [];
@@ -661,7 +791,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setIsUploadingImages(true);
         const formData = new FormData();
         Array.from(e.target.files).forEach(f => formData.append("files", f));
-        
+
         try {
             const resp = await apiClient.post(`/media/upload-multiple`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
@@ -673,15 +803,15 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 mimeType: f.mimeType,
                 uploadedAt: f.createdAt || new Date().toISOString()
             }));
-            
+
             const newImagesList = [...(activeImageCell.images || []), ...uploadedMeta];
-            
+
             // Update modal state
             setActiveImageCell(prev => ({ ...prev, images: newImagesList }));
-            
+
             // Save to cell instantly
             await handleCellChange(activeImageCell.rowId, activeImageCell.colId, JSON.stringify(newImagesList));
-            
+
         } catch (error) {
             console.error("Failed to upload images:", error);
             alert("Upload failed. Validation error or file too large.");
@@ -701,10 +831,20 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setFocusedCell(null);
         const colDef = columns.find(c => c.id === columnId);
         if (colDef && colDef.type === 'number') {
-            // If the user leaves a number cell empty, default it to 0
             if (value === '') {
                 handleCellChange(rowId, columnId, '0');
             }
+        } else if (colDef && colDef.type === 'currency') {
+            // Save currency value to backend on blur (not on every keystroke)
+            const finalValue = parseCurrencyInput(value);
+            if (finalValue === '') {
+                // Default to 0 if empty
+                await apiClient.post(`/sheets/${docName}/cells`, { rowId, columnId, rawValue: '0' });
+            } else {
+                await apiClient.post(`/sheets/${docName}/cells`, { rowId, columnId, rawValue: finalValue });
+            }
+            // Refresh to get formatted value from backend
+            debouncedRefreshFormulas();
         }
     };
 
@@ -717,14 +857,200 @@ export default function DocumentEditor({ docName, setActivePath }) {
         }
     };
 
+    const handleDownloadBackup = async () => {
+        try {
+            const res = await apiClient.get(`/sheets/${docName}/export`, { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([res.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            const dateStr = new Date().toISOString().split('T')[0];
+            link.setAttribute('download', `spreadsheet_backup_${docName}_${dateStr}.json`);
+            document.body.appendChild(link);
+            link.click();
+            link.parentNode.removeChild(link);
+        } catch (err) {
+            console.error("Backup failed", err);
+        }
+    };
+
+    const handleExportPDF = async () => {
+        try {
+            setIsLoading(true);
+            const doc = new jsPDF('landscape');
+            doc.text(`${sheetData?.name || 'Spreadsheet'} - Export`, 14, 15);
+
+            const tableCols = columns.map(c => ({ header: c.name, dataKey: c.id }));
+
+            const tableData = [];
+            const imagesToDraw = {};
+            const rowBackgrounds = {}; // To store computed row colors for PDF
+
+            const fetchImageAsBase64 = async (url) => {
+                try {
+                    const response = await fetch(url);
+                    const blob = await response.blob();
+                    return new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                } catch (e) {
+                    console.error("Failed to load image", e);
+                    return null;
+                }
+            };
+
+            const hexToRgb = (hex) => {
+                if (!hex || hex === 'transparent') return null;
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? [
+                    parseInt(result[1], 16),
+                    parseInt(result[2], 16),
+                    parseInt(result[3], 16)
+                ] : null;
+            };
+
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                const rowData = {};
+
+                // Determine row background color (same logic as grid rendering)
+                let computedRowBg = row.rowColor || null;
+                const sourceCol = columns.find(c => {
+                    const opts = typeof c.options === 'string' ? JSON.parse(c.options) : (c.options || {});
+                    return opts.isRowColorSource && c.bgColor;
+                });
+                if (sourceCol) {
+                    const sourceCell = row.cells?.find(c => c.columnId === sourceCol.id);
+                    const val = sourceCell?.computedValue ?? sourceCell?.rawValue;
+                    if (val !== null && val !== undefined && val !== '') {
+                        computedRowBg = sourceCol.bgColor;
+                    }
+                }
+                rowBackgrounds[i] = computedRowBg;
+
+                for (const col of columns) {
+                    const cell = row.cells?.find(c => c.columnId === col.id);
+                    let val = cell?.computedValue ?? cell?.rawValue ?? '';
+
+                    if (col.type === 'currency' && val !== '') {
+                        val = cell?.formattedValue || formatCurrency(val, col.currencyCode);
+                        val = val.replace('₹', 'Rs.');
+                    } else if (col.type === 'date') {
+                        if (val) {
+                            const d = new Date(val + 'T00:00:00');
+                            val = isNaN(d.getTime()) ? val : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                        } else {
+                            val = 'dd-mm-yyyy';
+                        }
+                    } else if (col.type === 'comment') {
+                        const count = cell?.id ? (commentCounts[cell.id] || 0) : 0;
+                        val = count > 0 ? `${count} comment${count > 1 ? 's' : ''}` : 'Tap to add comments.';
+                    } else if (col.type === 'multi_image' && val) {
+                        try {
+                            const imgs = JSON.parse(val);
+                            if (Array.isArray(imgs) && imgs.length > 0) {
+                                let firstImageUrl = imgs[0].url;
+                                if (!firstImageUrl.startsWith('http')) {
+                                    firstImageUrl = `${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${firstImageUrl}`;
+                                }
+                                const base64 = await fetchImageAsBase64(firstImageUrl);
+                                if (base64) {
+                                    imagesToDraw[`${i}_${col.id}`] = base64;
+                                }
+                            }
+                        } catch (e) { }
+                        val = ''; // We will draw the image manually
+                    }
+
+                    rowData[col.id] = val;
+                }
+                tableData.push(rowData);
+            }
+
+            autoTable(doc, {
+                startY: 20,
+                theme: 'grid',
+                columns: tableCols,
+                body: tableData,
+                styles: { 
+                    fontSize: 8, 
+                    cellPadding: 3, 
+                    valign: 'middle', 
+                    lineColor: [180, 180, 180], 
+                    lineWidth: 0.1,
+                    textColor: [51, 65, 85]
+                },
+                headStyles: { 
+                    fillColor: [51, 65, 85], 
+                    textColor: 255, 
+                    lineColor: [51, 65, 85], 
+                    lineWidth: 0.1,
+                    fontStyle: 'bold'
+                },
+                columnStyles: columns.reduce((acc, col) => {
+                    if (col.type === 'multi_image') acc[col.id] = { minCellWidth: 25 };
+                    if (col.type === 'number' || col.type === 'currency' || col.type === 'formula') {
+                        acc[col.id] = { ...acc[col.id], halign: 'right' };
+                    }
+                    return acc;
+                }, {}),
+                didParseCell: (data) => {
+                    if (data.section === 'body') {
+                        const colId = data.column.dataKey;
+                        const colDef = columns.find(c => c.id === colId);
+                        const rowIndex = data.row.index;
+                        
+                        // Background color priority: Column Color > Row Color
+                        const bgColorHex = colDef?.bgColor || rowBackgrounds[rowIndex];
+                        const rgb = hexToRgb(bgColorHex);
+                        if (rgb) {
+                            data.cell.styles.fillColor = rgb;
+                        }
+
+                        if (colDef && colDef.type === 'multi_image') {
+                            data.cell.styles.minCellHeight = 20;
+                        }
+                    }
+                },
+                didDrawCell: (data) => {
+                    if (data.section === 'body') {
+                        const imgBase64 = imagesToDraw[`${data.row.index}_${data.column.dataKey}`];
+                        if (imgBase64) {
+                            const cellWidth = data.cell.width;
+                            const cellHeight = data.cell.height;
+                            const imgWidth = Math.min(cellWidth - 4, 18);
+                            const imgHeight = Math.min(cellHeight - 4, 12);
+                            const x = data.cell.x + (cellWidth - imgWidth) / 2;
+                            const y = data.cell.y + (cellHeight - imgHeight) / 2;
+                            try {
+                                doc.addImage(imgBase64, 'JPEG', x, y, imgWidth, imgHeight);
+                            } catch (e) {
+                                try { doc.addImage(imgBase64, 'PNG', x, y, imgWidth, imgHeight); } catch (e2) { }
+                            }
+                        }
+                    }
+                }
+            });
+
+            doc.save(`${sheetData?.name || 'spreadsheet'}.pdf`);
+        } catch (error) {
+            console.error("PDF Export failed:", error);
+            alert("Failed to export PDF.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const renderColumnIcon = (type) => {
         switch (type) {
-            case 'image': 
+            case 'image':
             case 'multi_image':
                 return <FiImage className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
             case 'number': return <span className="text-green-500 text-sm font-medium shrink-0">123</span>;
             case 'currency': return <span className="text-blue-400 text-sm shrink-0">₹</span>;
             case 'formula': return <span className="text-purple-400 text-sm italic font-serif shrink-0">fx</span>;
+            case 'date': return <span className="text-blue-400 text-sm shrink-0">📅</span>;
             case 'comment': return <FiMessageSquare className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
             case 'text':
             default: return <span className="text-blue-400 font-serif text-sm shrink-0">T</span>;
@@ -759,14 +1085,26 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 </div>
 
                 <div className="flex items-center gap-2 sm:gap-3">
-                    <button 
-                        onClick={() => setIsShareModalOpen(true)}
+                    {(sheetData?.userPermission === 'admin') && (
+                        <button
+                            onClick={() => setIsShareModalOpen(true)}
+                            className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors"
+                        >
+                            <FiShare2 className="w-4 h-4" />
+                            <span className="hidden sm:block">Share</span>
+                        </button>
+                    )}
+                    <button
+                        onClick={handleDownloadBackup}
                         className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors"
                     >
-                        <FiShare2 className="w-4 h-4" />
-                        <span className="hidden sm:block">Share</span>
+                        <FiDownload className="w-4 h-4" />
+                        <span className="hidden sm:block">Backup</span>
                     </button>
-                    <button className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors">
+                    <button
+                        onClick={handleExportPDF}
+                        className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors"
+                    >
                         <FiDownload className="w-4 h-4" />
                         <span className="hidden sm:block">Download</span>
                     </button>
@@ -795,9 +1133,34 @@ export default function DocumentEditor({ docName, setActivePath }) {
                             <FiType className="w-4 h-4 text-gray-600 border-b-2 border-black" />
                             <FiChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
                         </div>
-                        <div className="flex items-center px-1 group cursor-pointer hover:bg-gray-100 rounded py-1 transition-colors">
-                            <BsPaintBucket className="w-4 h-4 text-gray-600 border-b-2 border-transparent" />
-                            <FiChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
+                        <div className="relative" ref={rowColorPickerRef}>
+                            <div 
+                                onClick={() => setIsRowColorPickerOpen(!isRowColorPickerOpen)}
+                                className="flex items-center px-1 group cursor-pointer hover:bg-gray-100 rounded py-1 transition-colors"
+                            >
+                                <BsPaintBucket className="w-4 h-4 text-gray-600 border-b-2 border-transparent" />
+                                <FiChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
+                            </div>
+                            
+                            {isRowColorPickerOpen && (
+                                <div className="absolute top-full left-0 mt-2 p-3 bg-white rounded-xl shadow-xl border border-gray-100 z-[100] w-48 animate-in fade-in zoom-in-95 duration-100">
+                                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Row Background</div>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {COLOR_PALETTE.map((color) => (
+                                            <button
+                                                key={`row-color-${color.name}`}
+                                                onClick={() => handleRowColorChange(color.value)}
+                                                className="w-8 h-8 rounded-lg border border-gray-100 hover:scale-110 transition-transform shadow-sm relative group"
+                                                style={{ backgroundColor: color.value || '#fff' }}
+                                                title={color.name}
+                                            >
+                                                {!color.value && <FiX className="w-3 h-3 text-gray-400 mx-auto" />}
+                                                <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/5 transition-colors" />
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -820,15 +1183,18 @@ export default function DocumentEditor({ docName, setActivePath }) {
                     </div>
                 </div>
 
-                <div className="relative pr-2 sm:pr-4 shrink-0 sm:self-auto self-end w-full sm:w-auto">
-                    <FiSearch className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                    <input
-                        type="text"
-                        placeholder="search values..."
-                        className="pl-8 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full sm:w-70 text-gray-600 placeholder:text-gray-400"
-                    />
-                    <div className="absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center shadow-sm">
-                        <FiSearch className="w-3 h-3 text-white" />
+                <div className="relative pr-2 sm:pr-4 shrink-0 sm:self-auto self-end w-full sm:w-auto flex items-center">
+                    <div className="relative w-full sm:w-72">
+                        <input
+                            type="text"
+                            placeholder="search values..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-4 pr-10 py-1.5 bg-white border border-blue-400 rounded-full text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full text-gray-700 placeholder:text-gray-400"
+                        />
+                        <div className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center shadow-sm cursor-pointer hover:bg-blue-600 transition-colors">
+                            <FiSearch className="w-3.5 h-3.5 text-white" />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -882,44 +1248,65 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                             >
                                                 <BsSortAlphaDown className="w-4 h-4 text-gray-400" />
                                                 Sort Ascending
+                                                Sort A-Z
+                                            </button>
+                                            <button
+                                                onClick={() => handleSort(col.id, 'desc')}
+                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                                            >
+                                                <BsSortAlphaDownAlt className="w-4 h-4 text-gray-400" />
+                                                Sort Z-A
                                             </button>
                                             <button
                                                 onClick={() => handleFilterColumnClick(col.id)}
                                                 className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
                                             >
                                                 <FiFilter className="w-4 h-4 text-gray-400" />
-                                                Filter
+                                                Filter by value
                                             </button>
-                                            <button
-                                                onClick={() => handleSetFormulaClick(col.id)}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <TbMathFunction className="w-4 h-4 text-gray-400" />
-                                                Set Formula
-                                            </button>
-                                            <div className="my-1 border-t border-gray-100"></div>
-                                            <button
-                                                onClick={() => handleAddColumnDirection(col.id, 'left')}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <BiArrowToLeft className="w-4 h-4 text-gray-400" />
-                                                Add Column to Left
-                                            </button>
-                                            <button
-                                                onClick={() => handleAddColumnDirection(col.id, 'right')}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <BiArrowToRight className="w-4 h-4 text-gray-400" />
-                                                Add Column to Right
-                                            </button>
-                                            <div className="my-1 border-t border-gray-100"></div>
-                                            <button
-                                                onClick={() => handleDeleteColumn(col.id)}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors"
-                                            >
-                                                <FiTrash2 className="w-4 h-4 text-red-400" />
-                                                Delete Column
-                                            </button>
+
+                                            {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
+                                                <>
+                                                    <div className="my-1 border-t border-gray-100"></div>
+                                                    <button
+                                                        onClick={() => handleRenameColumnClick(col.id)}
+                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <FiEdit2 className="w-4 h-4 text-gray-400" />
+                                                        Edit Column
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleSetFormulaClick(col.id)}
+                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <TbMathFunction className="w-4 h-4 text-blue-500" />
+                                                        Formula Builder
+                                                    </button>
+                                                    <div className="my-1 border-t border-gray-100"></div>
+                                                    <button
+                                                        onClick={() => handleAddColumnDirection(col.id, 'left')}
+                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <BiArrowToLeft className="w-4 h-4 text-gray-400" />
+                                                        Add Column to Left
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleAddColumnDirection(col.id, 'right')}
+                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <BiArrowToRight className="w-4 h-4 text-gray-400" />
+                                                        Add Column to Right
+                                                    </button>
+                                                    <div className="my-1 border-t border-gray-100"></div>
+                                                    <button
+                                                        onClick={() => handleDeleteColumn(col.id)}
+                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <FiTrash2 className="w-4 h-4 text-red-400" />
+                                                        Delete Column
+                                                    </button>
+                                                </>
+                                            )}
                                         </div>
                                     )}
                                     {/* Resize Handle */}
@@ -932,14 +1319,16 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                     </div>
                                 </th>
                             ))}
-                            <th className="w-12 min-w-12 border border-blue-900 bg-[#3b415a] hover:bg-[#2d3144] transition-colors p-0 sticky right-0 z-40 shadow-[-2px_0_5px_rgba(0,0,0,0.1)]">
-                                <button
-                                    onClick={handleAddColumnClick}
-                                    className="w-full h-full flex items-center justify-center text-white p-2"
-                                >
-                                    <FiPlus className="w-5 h-5" />
-                                </button>
-                            </th>
+                            {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
+                                <th className="w-12 min-w-12 border border-blue-900 bg-[#3b415a] hover:bg-[#2d3144] transition-colors p-0 sticky right-0 z-40 shadow-[-2px_0_5px_rgba(0,0,0,0.1)]">
+                                    <button
+                                        onClick={handleAddColumnClick}
+                                        className="w-full h-full flex items-center justify-center text-white p-2"
+                                    >
+                                        <FiPlus className="w-5 h-5" />
+                                    </button>
+                                </th>
+                            )}
                         </tr>
                         {/* Filter Row — shown when any column has an active filter */}
                         {Object.keys(columnFilters).length > 0 && (
@@ -990,123 +1379,178 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 </td>
                             </tr>
                         ) : (
-                            filteredRows.map((row, index) => (
-                                <tr key={row.id || index} className="hover:bg-blue-50/20 transition-colors group text-[#334155]">
-                                    <td className="border-b border-r border-gray-200 text-center py-2 text-[13px] text-gray-500 bg-gray-50/50 group-hover:bg-gray-100/50 transition-colors w-12 sticky left-0 z-10 min-w-12 font-medium">
-                                        {row.order !== undefined ? row.order + 1 : index + 1}
-                                    </td>
-                                    {columns.map((col) => {
-                                        const cell = row.cells?.find(c => c.columnId === col.id);
-                                        const isFormula = col.type === 'formula';
-                                        const val = isFormula
-                                            ? (cell?.computedValue ?? '')
-                                            : (cell?.computedValue ?? cell?.rawValue ?? '');
+                            filteredRows.map((row, index) => {
+                                // Determine row background color
+                                let computedRowBg = row.rowColor || 'transparent';
+                                const sourceCol = columns.find(c => {
+                                    const opts = typeof c.options === 'string' ? JSON.parse(c.options) : (c.options || {});
+                                    return opts.isRowColorSource && c.bgColor;
+                                });
+                                if (sourceCol) {
+                                    const sourceCell = row.cells?.find(c => c.columnId === sourceCol.id);
+                                    const val = sourceCell?.computedValue ?? sourceCell?.rawValue;
+                                    if (val !== null && val !== undefined && val !== '') {
+                                        computedRowBg = sourceCol.bgColor;
+                                    }
+                                }
 
-                                        const isFocused = focusedCell?.rowId === row.id && focusedCell?.colId === col.id;
-                                        let displayVal = val;
-                                        if (col.type === 'currency' && val !== '') {
-                                            displayVal = isFocused ? val : (cell?.formattedValue || formatCurrency(val, col.currencyCode));
-                                        }
+                                return (
+                                    <tr
+                                        key={row.id || index}
+                                        className="hover:bg-blue-50/10 transition-colors group text-[#334155]"
+                                        style={{ backgroundColor: computedRowBg }}
+                                    >
+                                        <td className={`border-b border-r border-gray-200 text-center py-2 text-[13px] text-gray-500 group-hover:bg-gray-100/50 transition-colors w-12 sticky left-0 z-10 min-w-12 font-medium ${computedRowBg === 'transparent' ? 'bg-gray-50/50' : ''}`}>
+                                            {row.order !== undefined ? row.order + 1 : index + 1}
+                                        </td>
+                                        {columns.map((col) => {
+                                            const cell = row.cells?.find(c => c.columnId === col.id);
+                                            const isFormula = col.type === 'formula';
+                                            const val = isFormula
+                                                ? (cell?.computedValue ?? '')
+                                                : (cell?.computedValue ?? cell?.rawValue ?? '');
 
-                                        const cellCommentCount = cell?.id ? (commentCounts[cell.id] || 0) : 0;
+                                            const isFocused = focusedCell?.rowId === row.id && focusedCell?.colId === col.id;
+                                            let displayVal = val;
+                                            if (col.type === 'currency' && val !== '') {
+                                                displayVal = isFocused ? val : (cell?.formattedValue || formatCurrency(val, col.currencyCode));
+                                            } else if (col.type === 'date' && val) {
+                                                const d = new Date(val + 'T00:00:00');
+                                                displayVal = isFocused
+                                                    ? val
+                                                    : (isNaN(d.getTime()) ? val : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }));
+                                            }
 
-                                        return (
-                                            <td
-                                                key={col.id}
-                                                className={`border-b border-r border-gray-200 p-0 relative h-9 ${resizingCol === col.id ? 'bg-blue-50/10' : ''} ${activeCellMenu?.rowIndex === index && activeCellMenu?.colId === col.id ? 'ring-2 ring-blue-500 z-10 bg-blue-50/10' : ''}`}
-                                                style={{ width: col.width || 220, minWidth: col.width || 220 }}
-                                                onContextMenu={(e) => handleCellContextMenu(e, index, col.id)}
-                                            >
-                                                {/* Comment Indicator Triangle */}
-                                                {cellCommentCount > 0 && (
-                                                    <div
-                                                        className="absolute top-0 right-0 z-20 cursor-pointer"
-                                                        onClick={(e) => { e.stopPropagation(); openCommentPanel(cell.id, row.id, col.id); }}
-                                                        onMouseEnter={() => handleCommentHover(cell.id)}
-                                                        onMouseLeave={() => { setHoveredCommentCell(null); setLatestCommentPreview(null); }}
-                                                        title={`${cellCommentCount} comment${cellCommentCount > 1 ? 's' : ''}`}
-                                                    >
-                                                        <div style={{ width: 0, height: 0, borderLeft: '8px solid transparent', borderTop: '8px solid #3b82f6' }} />
-                                                        {/* Tooltip preview */}
-                                                        {hoveredCommentCell === cell.id && latestCommentPreview?.cellId === cell.id && (
-                                                            <div className="absolute top-2 right-2 w-48 bg-gray-800 text-white text-xs rounded-lg p-2 shadow-lg z-50 pointer-events-none">
-                                                                <div className="font-semibold text-blue-300 mb-0.5">{latestCommentPreview.author}</div>
-                                                                <div className="line-clamp-2 opacity-90">{latestCommentPreview.text}</div>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                                {col.type === 'currency' && isFocused && (
-                                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm select-none pointer-events-none z-20">
-                                                        {getCurrencySymbol(col.currencyCode)}
-                                                    </div>
-                                                )}
-                                                {col.type === 'comment' ? (
-                                                    <div 
-                                                        className="w-full h-full flex items-center px-2 cursor-pointer hover:bg-blue-50/30 transition-colors"
-                                                        onClick={() => openCommentPanel(cell?.id, row.id, col.id)}
-                                                    >
-                                                        {cellCommentCount > 0 ? (
-                                                            <div className="flex items-center gap-2 overflow-hidden w-full">
-                                                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
-                                                                    {cellCommentCount}
+                                            const cellCommentCount = cell?.id ? (commentCounts[cell.id] || 0) : 0;
+
+                                            return (
+                                                <td
+                                                    key={col.id}
+                                                    className={`border-b border-r border-gray-200 p-0 relative h-9 ${resizingCol === col.id ? 'bg-blue-50/10' : ''} ${activeCellMenu?.rowIndex === index && activeCellMenu?.colId === col.id ? 'ring-2 ring-blue-500 z-10 bg-blue-50/10' : ''}`}
+                                                    style={{
+                                                        width: col.width || 220,
+                                                        minWidth: col.width || 220,
+                                                        backgroundColor: col.bgColor || computedRowBg || 'transparent'
+                                                    }}
+                                                    onContextMenu={(e) => handleCellContextMenu(e, index, col.id)}
+                                                >
+                                                    {/* Comment Indicator Triangle */}
+                                                    {cellCommentCount > 0 && (
+                                                        <div
+                                                            className="absolute top-0 right-0 z-20 cursor-pointer"
+                                                            onClick={(e) => { e.stopPropagation(); openCommentPanel(cell.id, row.id, col.id); }}
+                                                            onMouseEnter={() => handleCommentHover(cell.id)}
+                                                            onMouseLeave={() => { setHoveredCommentCell(null); setLatestCommentPreview(null); }}
+                                                            title={`${cellCommentCount} comment${cellCommentCount > 1 ? 's' : ''}`}
+                                                        >
+                                                            <div style={{ width: 0, height: 0, borderLeft: '8px solid transparent', borderTop: '8px solid #3b82f6' }} />
+                                                            {/* Tooltip preview */}
+                                                            {hoveredCommentCell === cell.id && latestCommentPreview?.cellId === cell.id && (
+                                                                <div className="absolute top-2 right-2 w-48 bg-gray-800 text-white text-xs rounded-lg p-2 shadow-lg z-50 pointer-events-none">
+                                                                    <div className="font-semibold text-blue-300 mb-0.5">{latestCommentPreview.author}</div>
+                                                                    <div className="line-clamp-2 opacity-90">{latestCommentPreview.text}</div>
                                                                 </div>
-                                                                <span className="text-xs text-gray-600 truncate">
-                                                                    {cellCommentCount === 1 ? '1 comment' : `${cellCommentCount} comments`}
-                                                                </span>
-                                                            </div>
-                                                        ) : (
-                                                            <span className="text-xs text-blue-400 italic">Tap to add comments.</span>
-                                                        )}
-                                                    </div>
-                                                ) : col.type === 'multi_image' ? (
-                                                    <div 
-                                                        className="w-full h-full flex items-center px-2 cursor-pointer hover:bg-black/5"
-                                                        onClick={() => handleImageGalleryOpen(row.id, col.id, displayVal)}
-                                                    >
-                                                        {(() => {
-                                                            try {
-                                                                const imgs = JSON.parse(displayVal || '[]');
-                                                                if (!Array.isArray(imgs) || imgs.length === 0) {
-                                                                    return <span className="text-gray-400 text-xs italic">No Images</span>;
-                                                                }
-                                                                return (
-                                                                    <div className="flex items-center gap-1.5 overflow-hidden w-full">
-                                                                        {imgs.slice(0, 3).map((img, i) => (
-                                                                            <img key={i} src={`${import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000'}${img.url}`} alt="img" className="h-6 w-6 object-cover rounded-md border border-gray-200 shrink-0 shadow-sm" />
-                                                                        ))}
-                                                                        {imgs.length > 3 && (
-                                                                            <div className="h-6 px-1.5 flex items-center justify-center bg-gray-100 border border-gray-200 rounded-md shrink-0">
-                                                                                <span className="text-[10px] font-medium text-gray-600">+{imgs.length - 3}</span>
-                                                                            </div>
-                                                                        )}
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {col.type === 'currency' && isFocused && (
+                                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm select-none pointer-events-none z-20">
+                                                            {getCurrencySymbol(col.currencyCode)}
+                                                        </div>
+                                                    )}
+                                                    {col.type === 'comment' ? (
+                                                        <div
+                                                            className="w-full h-full flex items-center px-2 cursor-pointer hover:bg-blue-50/30 transition-colors"
+                                                            onClick={() => openCommentPanel(cell?.id, row.id, col.id)}
+                                                        >
+                                                            {cellCommentCount > 0 ? (
+                                                                <div className="flex items-center gap-2 overflow-hidden w-full">
+                                                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                                                                        {cellCommentCount}
                                                                     </div>
-                                                                );
-                                                            } catch(e) {
-                                                                return <span className="text-red-400 text-xs">Invalid format</span>;
-                                                            }
-                                                        })()}
-                                                    </div>
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={displayVal}
-                                                        placeholder={col.type === 'number' || col.type === 'currency' ? '0' : ''}
-                                                        onChange={(e) => !isFormula && handleCellChange(row.id, col.id, e.target.value)}
-                                                        onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
-                                                        onBlur={(e) => !isFormula && handleCellBlur(row.id, col.id, e.target.value)}
-                                                        readOnly={isFormula}
-                                                        className={`w-full h-full absolute inset-0 px-3 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 ${col.type === 'currency' && isFocused ? 'pl-8' : ''} ${isFormula ? 'cursor-default bg-gray-50/30' : 'cursor-text'} ${col.type === 'number' || col.type === 'currency' || isFormula ? 'text-right' : ''}`}
-                                                    />
-                                                )}
-                                            </td>
-                                        );
-                                    })}
-                                    <td className="border-b border-gray-200 w-12 sticky right-0 z-10 min-w-12"></td>
-                                </tr>
-                            ))
+                                                                    <span className="text-xs text-gray-600 truncate">
+                                                                        {cellCommentCount === 1 ? '1 comment' : `${cellCommentCount} comments`}
+                                                                    </span>
+                                                                </div>
+                                                            ) : (
+                                                                <span className="text-xs text-blue-400 italic">Tap to add comments.</span>
+                                                            )}
+                                                        </div>
+                                                    ) : col.type === 'multi_image' ? (
+                                                        <div
+                                                            className="w-full h-full flex items-center px-3 cursor-pointer hover:bg-black/5"
+                                                            onClick={() => handleImageGalleryOpen(row.id, col.id, displayVal)}
+                                                        >
+                                                            {(() => {
+                                                                try {
+                                                                    const imgs = JSON.parse(displayVal || '[]');
+                                                                    if (!Array.isArray(imgs) || imgs.length === 0) {
+                                                                        return <span className="text-gray-400 text-xs italic">No Images</span>;
+                                                                    }
+                                                                    return (
+                                                                        <div className="relative inline-flex mt-px">
+                                                                            <img
+                                                                                src={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${imgs[0].url}`}
+                                                                                alt="img"
+                                                                                className="h-8 w-14 object-cover bg-white rounded border border-gray-200 shrink-0 shadow-sm"
+                                                                            />
+                                                                            {imgs.length > 1 && (
+                                                                                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#374151] text-white flex items-center justify-center text-[9px] font-bold shadow-sm border border-white">
+                                                                                    {imgs.length}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                } catch (e) {
+                                                                    return <span className="text-red-400 text-xs">Invalid format</span>;
+                                                                }
+                                                            })()}
+                                                        </div>
+                                                    ) : col.type === 'date' ? (
+                                                        <input
+                                                            type="date"
+                                                            value={val || ''}
+                                                            onChange={(e) => handleCellChange(row.id, col.id, e.target.value)}
+                                                            onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
+                                                            onBlur={(e) => handleCellBlur(row.id, col.id, e.target.value)}
+                                                            readOnly={cell?.permission === 'view'}
+                                                            className={`w-full h-full absolute inset-0 px-3 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 ${cell?.permission === 'view' ? 'cursor-default' : 'cursor-text'}`}
+                                                        />
+                                                    ) : (
+                                                        <input
+                                                            type="text"
+                                                            value={displayVal}
+                                                            placeholder={col.type === 'number' || col.type === 'currency' ? '0' : ''}
+                                                            onChange={(e) => !isFormula && handleCellChange(row.id, col.id, e.target.value)}
+                                                            onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
+                                                            onBlur={(e) => !isFormula && handleCellBlur(row.id, col.id, e.target.value)}
+                                                            readOnly={cell?.permission === 'view' || isFormula}
+                                                            className={`w-full h-full absolute inset-0 px-3 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 ${col.type === 'currency' && isFocused ? 'pl-8' : ''} ${cell?.permission === 'view' || isFormula ? 'cursor-default bg-gray-50/30' : 'cursor-text'} ${col.type === 'number' || col.type === 'currency' || isFormula ? 'text-right' : ''}`}
+                                                        />
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
+                                        <td className="border-b border-gray-200 w-12 sticky right-0 z-10 min-w-12"></td>
+                                    </tr>
+                                );
+                            })
                         )}
                     </tbody>
+                    {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
+                        <tr className="h-10 hover:bg-gray-50 transition-colors">
+                            <td className="w-12 border-b border-gray-200 bg-gray-50 sticky left-0 z-10"></td>
+                            <td colSpan={columns.length + 1} className="border-b border-gray-200 p-0">
+                                {/* <button
+                                    onClick={handleAddRow}
+                                    className="w-full h-full flex items-center px-4 gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium group transition-colors"
+                                >
+                                    <FiPlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                                    Add New Row
+                                </button> */}
+                            </td>
+                        </tr>
+                    )}
                 </table>
 
                 {/* Bottom Calculation Bar */}
@@ -1145,7 +1589,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                         </button>
                                     </div>
                                 ) : (
-                                        <div className="relative h-full flex items-center">
+                                    <div className="relative h-full flex items-center">
                                         <button
                                             onClick={() => setActiveCalcDropdown(activeCalcDropdown === col.id ? null : col.id)}
                                             className="flex items-center gap-1.5 w-full h-full px-3 text-sm text-[#475569] hover:text-[#3b82f6] hover:bg-blue-50/30 transition-colors outline-none"
@@ -1293,7 +1737,38 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                     </div>
                                 ))}
                             </div>
-                            
+
+                            {/* Column Color Selection */}
+                            <div className="space-y-3 mt-4 pt-4 border-t border-gray-100">
+                                <label className="block text-sm font-semibold text-gray-700">Column Color</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {COLOR_PALETTE.map((color) => (
+                                        <button
+                                            key={color.name}
+                                            onClick={() => setNewColumnBgColor(color.value)}
+                                            className={`w-8 h-8 rounded-full border-2 transition-all ${newColumnBgColor === color.value ? 'border-blue-500 scale-110 shadow-sm' : 'border-gray-200 hover:border-gray-300'}`}
+                                            style={{ backgroundColor: color.value || '#fff' }}
+                                            title={color.name}
+                                        >
+                                            {!color.value && <FiX className="w-4 h-4 text-gray-400 mx-auto" />}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <label className="flex items-center gap-3 cursor-pointer mt-4 group">
+                                    <div
+                                        onClick={() => setNewColumnIsRowColorSource(!newColumnIsRowColorSource)}
+                                        className={`w-10 h-5 rounded-full relative transition-colors ${newColumnIsRowColorSource ? 'bg-blue-500' : 'bg-gray-300'}`}
+                                    >
+                                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${newColumnIsRowColorSource ? 'left-6' : 'left-1'}`} />
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-semibold text-gray-700">Apply this color to the whole row</span>
+                                        <span className="text-[10px] text-gray-500">Row background will match this column's color</span>
+                                    </div>
+                                </label>
+                            </div>
+
                             {(newColumnType === 'currency' || newColumnType === 'formula') && (
                                 <div className="space-y-1.5 mt-4">
                                     <label className="block text-sm font-semibold text-gray-700">Currency Code (if applicable)</label>
@@ -1378,10 +1853,10 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                     <div className="flex-col overflow-y-auto max-h-56 pr-2 space-y-1.5 custom-scrollbar">
                                         {columns.map((col, idx) => {
                                             if (col.id === pendingFormulaColumnDesc.id) return null; // Don't allow self-reference
-                                            
+
                                             // Calculate A1 notation for this column (e.g., A, B, C...)
                                             const letter = String.fromCharCode(65 + (idx % 26));
-                                            
+
                                             return (
                                                 <button
                                                     key={col.id}
@@ -1390,10 +1865,10 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                 >
                                                     <div className="w-6 flex justify-center text-gray-400 group-hover:text-blue-500">
                                                         {col.type === 'number' ? <span className="text-xs font-medium">123</span> :
-                                                         col.type === 'currency' ? <span className="text-sm">₹</span> :
-                                                         col.type === 'formula' ? <span className="italic font-serif text-sm">fx</span> :
-                                                         col.type === 'date' ? <span className="text-sm">📅</span> :
-                                                         <span className="font-serif">T</span>}
+                                                            col.type === 'currency' ? <span className="text-sm">₹</span> :
+                                                                col.type === 'formula' ? <span className="italic font-serif text-sm">fx</span> :
+                                                                    col.type === 'date' ? <span className="text-sm">📅</span> :
+                                                                        <span className="font-serif">T</span>}
                                                     </div>
                                                     <span className="text-sm text-gray-700 font-medium group-hover:text-blue-700">{col.name}</span>
                                                 </button>
@@ -1405,14 +1880,14 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 {/* Right Side: Calculator Keypad */}
                                 <div className="w-1/2 flex flex-col gap-2">
                                     <div className="flex justify-end mb-1">
-                                         <button 
+                                        <button
                                             onClick={() => setFormulaString(prev => prev.slice(0, -1))}
                                             className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-sm transition-colors"
                                         >
                                             Delete
                                         </button>
                                     </div>
-                                    
+
                                     <div className="grid grid-cols-4 gap-2 flex-grow">
                                         {['+', '-', '/', '*', '7', '8', '9', '%', '4', '5', '6', '(', '1', '2', '3', ')', 'fn', '0', '.', ','].map(key => (
                                             <button
@@ -1446,17 +1921,17 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 onClick={() => {
                                     let query = formulaString;
                                     if (!query.startsWith('=')) query = '=' + query;
-                                    
+
                                     // Submit to the original payload handler
                                     const formulaColCurrencyCode = pendingFormulaColumnDesc.currencyCode;
-                                    
+
                                     // Set state so saveColumnToBackend uses correct currency
                                     setNewColumnCurrencyCode(formulaColCurrencyCode);
-                                    
+
                                     saveColumnToBackend(
-                                        pendingFormulaColumnDesc.name, 
-                                        pendingFormulaColumnDesc.type, 
-                                        pendingFormulaColumnDesc.id, 
+                                        pendingFormulaColumnDesc.name,
+                                        pendingFormulaColumnDesc.type,
+                                        pendingFormulaColumnDesc.id,
                                         query
                                     );
                                 }}
@@ -1487,7 +1962,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 <FiX className="w-5 h-5" />
                             </button>
                         </div>
-                        
+
                         {/* Content Area */}
                         <div className="flex-1 overflow-y-auto p-6 bg-gray-50/30">
                             {activeImageCell.images?.length === 0 ? (
@@ -1499,10 +1974,10 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                     {activeImageCell.images.map((img, index) => (
                                         <div key={index} className="group relative aspect-square bg-gray-100 rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                            <a href={`${import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000'}${img.url}`} target="_blank" rel="noreferrer" className="block w-full h-full">
-                                                <img 
-                                                    src={`${import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000'}${img.url}`} 
-                                                    alt={img.fileName || 'Cell Image'} 
+                                            <a href={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${img.url}`} target="_blank" rel="noreferrer" className="block w-full h-full">
+                                                <img
+                                                    src={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${img.url}`}
+                                                    alt={img.fileName || 'Cell Image'}
                                                     className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                                                     loading="lazy"
                                                 />
@@ -1511,7 +1986,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                 <div className="text-[10px] text-white/90 truncate pr-2">
                                                     {img.fileName}
                                                 </div>
-                                                <button 
+                                                <button
                                                     onClick={(e) => { e.preventDefault(); handleDeleteImage(index); }}
                                                     className="text-red-400 hover:text-red-300 bg-white/10 rounded p-1 backdrop-blur-sm shrink-0"
                                                     title="Delete image"
@@ -1524,7 +1999,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 </div>
                             )}
                         </div>
-                        
+
                         {/* Footer Upload Area */}
                         <div className="p-4 border-t border-gray-100 bg-white shrink-0">
                             <div className="flex items-center gap-4">
@@ -1541,11 +2016,11 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                         <>
                                             <FiUploadCloud className="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" />
                                             Upload Images
-                                            <input 
-                                                type="file" 
-                                                multiple 
-                                                accept="image/*" 
-                                                className="hidden" 
+                                            <input
+                                                type="file"
+                                                multiple
+                                                accept="image/*"
+                                                className="hidden"
                                                 ref={fileInputRef}
                                                 onChange={handleImagesSelected}
                                             />
@@ -1711,10 +2186,10 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 </div>
             )}
             {/* Share Modal */}
-            <ShareModal 
-                isOpen={isShareModalOpen} 
-                onClose={() => setIsShareModalOpen(false)} 
-                sheetId={docName} 
+            <ShareModal
+                isOpen={isShareModalOpen}
+                onClose={() => setIsShareModalOpen(false)}
+                sheetId={docName}
             />
         </div>
     );

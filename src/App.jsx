@@ -5,6 +5,7 @@ import SharedWithMe from "./Pages/SharedWithMe";
 import Users from "./Pages/Users";
 import Messages from "./Pages/Messages";
 import DocumentEditor from "./Pages/DocumentEditor";
+import AuditLogs from "./Pages/AuditLogs";
 import Login from "./Pages/Login";
 
 function App() {
@@ -54,6 +55,9 @@ function App() {
                 )}
                 {activePath === "/users" && (
                     <Users setMobileOpen={setMobileOpen} />
+                )}
+                {activePath === "/audit" && (
+                    <AuditLogs setMobileOpen={setMobileOpen} />
                 )}
                 {activePath === "/messages" && (
                     <Messages setMobileOpen={setMobileOpen} />

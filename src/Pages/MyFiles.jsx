@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { FiSearch, FiSliders, FiPlus, FiFileText, FiFolder, FiMenu, FiX, FiMoreVertical, FiEdit2, FiTrash2, FiChevronRight, FiMove } from "react-icons/fi";
+import { FiSearch, FiSliders, FiPlus, FiFileText, FiFolder, FiMenu, FiX, FiMoreVertical, FiEdit2, FiTrash2, FiChevronRight, FiMove, FiDownload } from "react-icons/fi";
 import { BsFileEarmarkSpreadsheet } from "react-icons/bs";
 import apiClient from "../api/apiClient";
 
@@ -33,7 +33,7 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
             // Fetch folders tree and ALL sheets in parallel
             const [folderRes, sheetsRes] = await Promise.all([
                 apiClient.get('/folders'),
-                apiClient.get('/admin/sheets', { params: { limit: 1000 } })
+                apiClient.get('/sheets', { params: { limit: 1000 } })
             ]);
 
             const fetchedItems = [];
@@ -113,9 +113,9 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
         if (!newDocName.trim()) return;
 
         try {
-            const response = await apiClient.post('/admin/sheets', { 
-                name: newDocName, 
-                folderId: currentFolderId 
+            const response = await apiClient.post('/sheets', {
+                name: newDocName,
+                folderId: currentFolderId
             });
             const newSheet = response.data.data;
             fetchItems();
@@ -126,6 +126,26 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
         }
 
         setIsDocModalOpen(false);
+    };
+
+    const importInputRef = useRef(null);
+
+    const handleImportBackup = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const backupData = JSON.parse(text);
+
+            await apiClient.post('/sheets/import', backupData);
+            fetchItems();
+            setIsDropdownOpen(false);
+            event.target.value = null; // reset input
+        } catch (error) {
+            console.error("Error importing backup:", error);
+            alert("Failed to restore backup. Invalid file format.");
+        }
     };
 
     const navigateToFolder = (folderId, folderTitle) => {
@@ -155,7 +175,7 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
             if (itemToRename.type === "folder") {
                 await apiClient.put(`/folders/${activeItemId}`, { name: renameItemName });
             } else {
-                await apiClient.put(`/admin/sheets/${activeItemId}`, { name: renameItemName });
+                await apiClient.put(`/sheets/${activeItemId}`, { name: renameItemName });
             }
             fetchItems();
         } catch (error) {
@@ -185,7 +205,7 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
             if (itemToMove.type === "folder") {
                 await apiClient.put(`/folders/${activeItemId}`, { parentId: moveDestinationId });
             } else {
-                await apiClient.put(`/admin/sheets/${activeItemId}`, { folderId: moveDestinationId });
+                await apiClient.put(`/sheets/${activeItemId}`, { folderId: moveDestinationId });
             }
             fetchItems();
         } catch (error) {
@@ -212,7 +232,7 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
             if (itemToDelete.type === "folder") {
                 await apiClient.delete(`/folders/${activeItemId}`);
             } else {
-                await apiClient.delete(`/admin/sheets/${activeItemId}`);
+                await apiClient.delete(`/sheets/${activeItemId}`);
             }
             fetchItems();
         } catch (error) {
@@ -327,6 +347,15 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
                                         <BsFileEarmarkSpreadsheet className="w-4 h-4 text-green-600" />
                                         Import from Excel
                                     </button>
+                                    <button 
+                                        onClick={() => {
+                                            if (importInputRef.current) importInputRef.current.click();
+                                        }}
+                                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer text-left"
+                                    >
+                                        <FiDownload className="w-4 h-4 text-purple-600" />
+                                        Restore from Backup
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -409,6 +438,15 @@ export default function MyFiles({ setMobileOpen, setActivePath, setCurrentDocNam
                     </>
                 )}
             </div>
+
+            {/* Hidden Input for Backup Restore */}
+            <input 
+                type="file" 
+                accept=".json" 
+                ref={importInputRef} 
+                className="hidden" 
+                onChange={handleImportBackup} 
+            />
 
             {/* Create Folder Modal */}
             {isModalOpen && (

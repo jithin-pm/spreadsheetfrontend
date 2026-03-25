@@ -1,13 +1,5 @@
 import { useState, useEffect } from "react";
-import {
-    FiFolder,
-    FiUsers,
-    FiShare2,
-    FiChevronLeft,
-    FiChevronRight,
-    FiLogOut,
-    FiMessageSquare
-} from "react-icons/fi";
+import { FiFolder, FiUsers, FiShare2, FiChevronLeft, FiChevronRight, FiLogOut, FiActivity } from "react-icons/fi";
 import { PiPaperPlaneTiltBold } from "react-icons/pi";
 import apiClient from "../api/apiClient";
 
@@ -16,6 +8,7 @@ const navItems = [
     { name: "Shared with me", icon: FiShare2, path: "/shared" },
     { name: "Users", icon: FiUsers, path: "/users" },
     { name: "Messages", icon: PiPaperPlaneTiltBold, path: "/messages" },
+    { name: "Audit Logs", icon: FiActivity, path: "/audit" },
 ];
 
 export default function Sidebar({ isCollapsed, toggleCollapse, mobileOpen, setMobileOpen, activePath, setActivePath }) {
@@ -96,7 +89,7 @@ export default function Sidebar({ isCollapsed, toggleCollapse, mobileOpen, setMo
                     <nav className="flex-1 px-4 space-y-2">
                         {navItems
                             .filter(item => {
-                                if (item.name === "Users" && user?.role !== 'admin' && user?.role !== 'superadmin') {
+                                if ((item.name === "Users" || item.name === "Audit Logs") && user?.role !== 'admin' && user?.role !== 'superadmin') {
                                     return false;
                                 }
                                 return true;

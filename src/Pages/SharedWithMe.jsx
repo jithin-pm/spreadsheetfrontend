@@ -18,7 +18,7 @@ export default function SharedWithMe({ setMobileOpen, setActivePath, setCurrentD
             // Import apiClient here if not already imported at the top
             // Since this component doesn't have it, we'll need to add the import as well
             const { default: apiClient } = await import("../api/apiClient.js");
-            const response = await apiClient.get('/admin/shared-with-me');
+            const response = await apiClient.get('/sheets/shared');
             
             // Map the API response to the format expected by the UI
             const formattedItems = response.data.data.map(sheet => ({
@@ -123,7 +123,8 @@ export default function SharedWithMe({ setMobileOpen, setActivePath, setCurrentD
                                             item={file}
                                             onClick={() => {
                                                 if (file.fileType === 'doc') {
-                                                    setCurrentDocName(file.title);
+                                                    // Pass the ID instead of the title to the DocumentEditor
+                                                    setCurrentDocName(file.id);
                                                     setActivePath('/document-editor');
                                                 }
                                             }}

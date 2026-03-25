@@ -1,8 +1,11 @@
 import { FiMenu, FiSearch, FiEdit } from "react-icons/fi";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { io as socketIO } from "socket.io-client";
 import ChatWindow from "../Components/ChatWindow";
 import NewChatModal from "../Components/NewChatModal";
 import apiClient from "../api/apiClient";
+
+const SOCKET_URL = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041';
 
 export default function Messages({ setMobileOpen }) {
     const [searchQuery, setSearchQuery] = useState("");
@@ -10,8 +13,67 @@ export default function Messages({ setMobileOpen }) {
     const [conversations, setConversations] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+    const [onlineUserIds, setOnlineUserIds] = useState(new Set());
 
+    const socketRef = useRef(null);
     const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+    const token = localStorage.getItem('accessToken'); // Fixed: changed 'token' to 'accessToken'
+
+    // ── Socket.IO connection for online/offline tracking ─────────────────────
+    useEffect(() => {
+        if (!token) {
+            console.warn("No accessToken found in localStorage, socket won't connect.");
+            return;
+        }
+
+        console.log("Connecting to Socket at:", SOCKET_URL);
+        const socket = socketIO(SOCKET_URL, {
+            auth: { token },
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 5
+        });
+        socketRef.current = socket;
+
+        socket.on("connect", () => {
+            console.log("Socket connected:", socket.id);
+        });
+
+        socket.on("connect_error", (err) => {
+            console.error("Socket connection error:", err.message);
+        });
+
+        // Receive full list of online users on connect
+        socket.on("online_users", (userIds) => {
+            console.log("Online users received:", userIds);
+            setOnlineUserIds(new Set(userIds.map(id => String(id))));
+        });
+
+        // Real-time status updates
+        socket.on("user_status", ({ userId, status }) => {
+            console.log(`User ${userId} is now ${status}`);
+            const sId = String(userId);
+            setOnlineUserIds(prev => {
+                const next = new Set(prev);
+                if (status === "online") {
+                    next.add(sId);
+                } else {
+                    next.delete(sId);
+                }
+                return next;
+            });
+        });
+
+        // Real-time new DM → refresh inbox
+        socket.on("direct_message", () => {
+            fetchInbox();
+        });
+
+        return () => {
+            socket.disconnect();
+            socketRef.current = null;
+        };
+    }, [token]);
 
     const fetchInbox = async () => {
         try {
@@ -21,7 +83,6 @@ export default function Messages({ setMobileOpen }) {
             const mappedConversations = data.map(msg => {
                 const partner = msg.senderId === currentUser.id ? msg.receiver : msg.sender;
                 
-                // Format time conditionally (Today vs Date)
                 const d = new Date(msg.createdAt);
                 const isToday = d.toDateString() === new Date().toDateString();
                 const timeStr = isToday 
@@ -32,10 +93,14 @@ export default function Messages({ setMobileOpen }) {
                     id: partner.id,
                     name: partner.name,
                     avatar: partner.avatar,
-                    lastMessage: msg.fileUrl ? (msg.fileType === 'audio' ? '🎤 Audio Message' : '📎 Attachment') : msg.message,
+                    lastMessage: msg.fileUrl 
+                        ? (msg.fileType === 'audio' ? '🎤 Audio Message' 
+                           : msg.fileType === 'image' ? '📷 Image' 
+                           : '📄 Document') 
+                        : msg.message,
                     time: timeStr,
                     unread: msg.unreadCount,
-                    isOnline: false, // Could integrate with socket active users if available
+                    isOnline: false, // will be updated below
                     hasConversation: true
                 };
             });
@@ -49,9 +114,6 @@ export default function Messages({ setMobileOpen }) {
 
     useEffect(() => {
         fetchInbox();
-        // Optional: Poll every 10s for new messages/unread counts if websockets aren't wired up
-        // const interval = setInterval(fetchInbox, 10000);
-        // return () => clearInterval(interval);
     }, []);
 
     const filteredConversations = conversations.filter(conv =>
@@ -118,7 +180,7 @@ export default function Messages({ setMobileOpen }) {
                                                         {conv.name?.charAt(0) || "U"}
                                                     </div>
                                                 )}
-                                                {conv.isOnline && (
+                                                {onlineUserIds.has(String(conv.id)) && (
                                                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
                                                 )}
                                             </div>
@@ -162,7 +224,8 @@ export default function Messages({ setMobileOpen }) {
                     {/* Chat Area */}
                     {selectedUser && (
                         <ChatWindow
-                            selectedUser={selectedUser}
+                            socket={socketRef.current}
+                            selectedUser={{...selectedUser, isOnline: onlineUserIds.has(String(selectedUser.id))}}
                             setSelectedUser={setSelectedUser}
                             onMessageSent={fetchInbox}
                         />
