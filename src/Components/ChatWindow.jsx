@@ -1,4 +1,4 @@
-import { FiPaperclip, FiMic, FiImage, FiVideo, FiMoreVertical, FiPhone, FiVideo as FiVideoCall, FiArrowLeft, FiSend, FiSearch, FiTrash2, FiSquare, FiFile, FiDownload } from "react-icons/fi";
+import { FiPaperclip, FiMic, FiImage, FiVideo, FiMoreVertical, FiPhone, FiVideo as FiVideoCall, FiArrowLeft, FiSend, FiSearch, FiTrash2, FiSquare, FiFile, FiDownload, FiPlay, FiPause } from "react-icons/fi";
 import { useState, useRef, useEffect } from "react";
 import { PiPaperPlaneTiltBold } from "react-icons/pi";
 
@@ -7,9 +7,116 @@ import Swal from "sweetalert2";
 
 const BACKEND_URL = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041';
 
+const formatDateSeparator = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    const isSameDay = (d1, d2) => d1.getDate() === d2.getDate() && d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear();
+
+    if (isSameDay(date, today)) return 'Today';
+    if (isSameDay(date, yesterday)) return 'Yesterday';
+    
+    // exact 2 days ago check
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(today.getDate() - 2);
+    if (isSameDay(date, twoDaysAgo)) return '2 days ago';
+
+    return date.toLocaleDateString('en-GB'); // DD/MM/YYYY
+};
+
+// ── WhatsApp-style Voice Player ──────────────────────────────────────────────
+function VoiceMessage({ src, isMine }) {
+    const audioRef = useRef(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [currentTime, setCurrentTime] = useState(0);
+
+    const togglePlay = () => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (isPlaying) { audio.pause(); } else { audio.play(); }
+    };
+
+    const formatSec = (s) => {
+        if (!s || isNaN(s)) return '0:00';
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return `${m}:${sec.toString().padStart(2, '0')}`;
+    };
+
+    // Static waveform bar heights (decorative)
+    const bars = [3,5,8,6,10,7,4,9,6,5,8,4,7,10,5,8,6,4,9,7,5,8,6,10,4,7,5,9,6,8];
+
+    const barColor = isMine ? 'bg-indigo-300' : 'bg-sky-300';
+    const barActiveColor = isMine ? 'bg-white' : 'bg-indigo-500';
+
+    return (
+        <div className="flex items-center gap-2.5 w-64">
+            <audio
+                ref={audioRef}
+                src={src}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => { setIsPlaying(false); setProgress(0); setCurrentTime(0); }}
+                onTimeUpdate={(e) => {
+                    const t = e.target;
+                    setCurrentTime(t.currentTime);
+                    setProgress(t.duration ? t.currentTime / t.duration : 0);
+                }}
+                onLoadedMetadata={(e) => setDuration(e.target.duration)}
+            />
+            {/* Play/Pause button */}
+            <button
+                onClick={togglePlay}
+                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                    isMine ? 'bg-indigo-500 hover:bg-indigo-400' : 'bg-sky-400 hover:bg-sky-500'
+                }`}
+            >
+                {isPlaying
+                    ? <FiPause className="w-4 h-4 text-white" />
+                    : <FiPlay className="w-4 h-4 text-white ml-0.5" />}
+            </button>
+
+            {/* Waveform + time */}
+            <div className="flex-1 flex items-center gap-2">
+                <div className="flex items-center gap-[2px] h-8 flex-1">
+                    {bars.map((h, i) => {
+                        const filled = progress > 0 && i / bars.length < progress;
+                        return (
+                            <div
+                                key={i}
+                                className={`rounded-full w-1 transition-colors ${filled ? barActiveColor : barColor}`}
+                                style={{ height: `${h * 2.5}px` }}
+                            />
+                        );
+                    })}
+                </div>
+                <span className={`text-[10px] font-semibold shrink-0 ${isMine ? 'text-indigo-700' : 'text-sky-700'}`}>
+                    {formatSec(currentTime > 0 ? currentTime : duration)}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+
 export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSent, socket }) {
     const [messageInput, setMessageInput] = useState("");
     const messagesEndRef = useRef(null);
+    const textareaRef = useRef(null);
+
+    // Auto-grow textarea
+    useEffect(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`; // max-h-32 = 128px
+        }
+    }, [messageInput]);
 
     // Audio recording state
     const [isRecording, setIsRecording] = useState(false);
@@ -38,7 +145,7 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
         try {
             const res = await apiClient.get(`/dm/${selectedUser.id}`);
             const data = res.data.data.map(msg => {
-                const isMine = msg.senderId === currentUser.id;
+                const isMine = String(msg.senderId) === String(currentUser.id);
                 const d = new Date(msg.createdAt);
                 return {
                     id: msg.id,
@@ -49,7 +156,8 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                     fileUrl: msg.fileType === 'file' && msg.fileUrl ? `${BACKEND_URL}${msg.fileUrl}` : null,
                     fileType: msg.fileType,
                     time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    isMine
+                    isMine,
+                    rawDate: d.toISOString()
                 };
             });
             setChatMessages(data);
@@ -59,24 +167,25 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
     };
 
     useEffect(() => {
-        fetchMessages();
-    }, [selectedUser]);
+        if (selectedUser?.id) {
+            fetchMessages();
+        }
+    }, [selectedUser?.id]);
 
     // ── Real-time message listener ───────────────────────────────────────────
     useEffect(() => {
         if (!socket || !selectedUser) return;
 
         const handleNewMessage = (msg) => {
-            // Check if message belongs to THIS conversation
-            const isFromSelected = String(msg.senderId) === String(selectedUser.id);
-            const isToSelected = String(msg.receiverId) === String(selectedUser.id);
+            const isFromSelected = String(msg.senderId).toLowerCase() === String(selectedUser.id).toLowerCase();
+            const isToSelected = String(msg.receiverId).toLowerCase() === String(selectedUser.id).toLowerCase();
             
             if (isFromSelected || isToSelected) {
                 setChatMessages(prev => {
                     // Avoid duplicates (e.g. if we already added it optimistically)
                     if (prev.find(m => String(m.id) === String(msg.id))) return prev;
 
-                    const d = new Date(msg.createdAt);
+                    const d = msg.createdAt ? new Date(msg.createdAt) : new Date();
                     const mapped = {
                         id: msg.id,
                         senderId: msg.senderId,
@@ -86,7 +195,8 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                         fileUrl: msg.fileType === 'file' && msg.fileUrl ? `${BACKEND_URL}${msg.fileUrl}` : null,
                         fileType: msg.fileType,
                         time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        isMine: msg.senderId === currentUser.id
+                        isMine: String(msg.senderId) === String(currentUser.id),
+                        rawDate: d.toISOString()
                     };
                     return [...prev, mapped];
                 });
@@ -109,17 +219,21 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
         try {
             const res = await apiClient.post(`/dm/${selectedUser.id}`, { message: messageInput });
             const msg = res.data.data;
-            const d = new Date(msg.createdAt);
+            const d = msg.createdAt ? new Date(msg.createdAt) : new Date();
             
             const newMessage = {
                 id: msg.id,
                 senderId: msg.senderId,
                 text: msg.message,
                 time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                isMine: true
+                isMine: true,
+                rawDate: d.toISOString()
             };
 
-            setChatMessages(prev => [...prev, newMessage]);
+            setChatMessages(prev => {
+                if (prev.find(m => String(m.id) === String(newMessage.id))) return prev;
+                return [...prev, newMessage];
+            });
             setMessageInput("");
             
             if (onMessageSent) onMessageSent();
@@ -167,6 +281,20 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
         const file = e.target.files?.[0];
         if (!file) return;
 
+        // Check file size (50MB = 50 * 1024 * 1024 bytes)
+        const MAX_FILE_SIZE = 50 * 1024 * 1024;
+        if (file.size > MAX_FILE_SIZE) {
+            Swal.fire({ 
+                icon: 'warning', 
+                title: 'File Too Large', 
+                text: 'Please select a file smaller than 50MB.', 
+                confirmButtonColor: '#6366f1',
+                customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl px-5' } 
+            });
+            e.target.value = '';
+            return;
+        }
+
         setIsUploading(true);
         try {
             const formData = new FormData();
@@ -188,10 +316,14 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                 fileUrl: !isImage && msg.fileUrl ? `${BACKEND_URL}${msg.fileUrl}` : null,
                 fileType: msg.fileType,
                 time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                isMine: true
+                isMine: true,
+                rawDate: d.toISOString()
             };
 
-            setChatMessages(prev => [...prev, newMessage]);
+            setChatMessages(prev => {
+                if (prev.find(m => String(m.id) === String(newMessage.id))) return prev;
+                return [...prev, newMessage];
+            });
             if (onMessageSent) onMessageSent();
         } catch (error) {
             console.error("Failed to upload file:", error);
@@ -243,10 +375,14 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                         text: "",
                         audioUrl: msg.fileUrl ? `${BACKEND_URL}${msg.fileUrl}` : null,
                         time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        isMine: true
+                        isMine: true,
+                        rawDate: d.toISOString()
                     };
 
-                    setChatMessages(prev => [...prev, newMessage]);
+                    setChatMessages(prev => {
+                        if (prev.find(m => String(m.id) === String(newMessage.id))) return prev;
+                        return [...prev, newMessage];
+                    });
                     if (onMessageSent) onMessageSent();
 
                 } catch (error) {
@@ -341,14 +477,23 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
 
             {/* Messages Scroll Area */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-                <div className="text-center">
-                    <span className="text-xs font-medium text-gray-400 bg-gray-100/50 px-3 py-1 rounded-full">
-                        Today
-                    </span>
-                </div>
+                {chatMessages.map((msg, index) => {
+                    const currentGroup = formatDateSeparator(msg.rawDate);
+                    const prevGroup = index > 0 ? formatDateSeparator(chatMessages[index - 1].rawDate) : null;
+                    const showSeparator = currentGroup !== prevGroup;
 
-                {chatMessages.map((msg) => (
-                    <div key={msg.id} className={`group/msg flex max-w-3xl ${msg.isMine ? 'ml-auto justify-end' : ''}`}>
+                    return (
+                        <div key={msg.id} className="space-y-6">
+                            {showSeparator && (
+                                <div className="flex items-center justify-center my-6 opacity-75">
+                                    <div className="flex-1 border-t border-gray-200"></div>
+                                    <span className="mx-4 text-[11px] font-semibold text-gray-500 uppercase tracking-widest bg-transparent">
+                                        {currentGroup}
+                                    </span>
+                                    <div className="flex-1 border-t border-gray-200"></div>
+                                </div>
+                            )}
+                            <div className={`group/msg flex max-w-3xl ${msg.isMine ? 'ml-auto justify-end' : ''}`}>
                         {!msg.isMine && (
                             <div className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 sm:flex items-center justify-center font-bold text-xs shrink-0 mr-3 mt-auto hidden">
                                 {selectedUser.name.charAt(0)}
@@ -371,9 +516,14 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                                         }
                                     </button>
                                 )}
-                                <div className={`px-4 py-2.5 rounded-2xl max-w-[85%] sm:max-w-md wrap-break-word ${msg.isMine
-                                    ? 'bg-indigo-600 text-white rounded-br-sm shadow-sm'
-                                    : 'bg-white text-gray-800 rounded-bl-sm shadow-sm border border-gray-100'
+                                <div className={`rounded-2xl max-w-[85%] sm:max-w-md wrap-break-word ${msg.imageUrl
+                                    ? 'p-0 overflow-hidden'
+                                    : msg.audioUrl
+                                    ? `px-3 py-2 ${msg.isMine ? 'bg-indigo-100 rounded-br-sm shadow-sm' : 'bg-sky-50 rounded-bl-sm shadow-sm border border-sky-100'}`
+                                    : `px-4 py-2.5 ${msg.isMine
+                                        ? 'bg-indigo-100 text-gray-800 rounded-br-sm shadow-sm'
+                                        : 'bg-sky-50 text-gray-800 rounded-bl-sm shadow-sm border border-sky-100'
+                                    }`
                                     }`}>
                                     {msg.imageUrl ? (
                                         /* ── Image Message ── */
@@ -381,7 +531,7 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                                             <img 
                                                 src={msg.imageUrl} 
                                                 alt={msg.text || 'Image'} 
-                                                className="rounded-xl max-w-full max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                                className="rounded-xl max-w-full max-h-64 object-cover cursor-pointer shadow-sm border border-black/5 hover:opacity-90 transition-opacity"
                                                 loading="lazy"
                                             />
                                             {msg.text && !msg.text.match(/\.(jpg|jpeg|png|gif|webp)$/i) && (
@@ -394,31 +544,27 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                                             href={msg.fileUrl} 
                                             target="_blank" 
                                             rel="noreferrer" 
-                                            className={`flex items-center gap-3 p-2 rounded-xl transition-colors ${
-                                                msg.isMine 
-                                                    ? 'bg-indigo-500/30 hover:bg-indigo-500/40' 
-                                                    : 'bg-gray-50 hover:bg-gray-100 border border-gray-200'
-                                            }`}
+                                            className={`flex items-center gap-3 rounded-xl transition-opacity p-1 -m-1 hover:opacity-80`}
                                         >
                                             <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                                                msg.isMine ? 'bg-indigo-400/40' : 'bg-red-50'
+                                                msg.isMine ? 'bg-indigo-500' : 'bg-sky-100'
                                             }`}>
-                                                <FiFile className={`w-5 h-5 ${msg.isMine ? 'text-white' : 'text-red-500'}`} />
+                                                <FiFile className={`w-5 h-5 ${msg.isMine ? 'text-white' : 'text-sky-600'}`} />
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className={`text-sm font-medium truncate ${msg.isMine ? 'text-white' : 'text-gray-800'}`}>
+                                                <p className="text-sm font-medium truncate text-gray-800">
                                                     {msg.text || 'Document'}
                                                 </p>
-                                                <p className={`text-xs ${msg.isMine ? 'text-indigo-200' : 'text-gray-400'}`}>
+                                                <p className={`text-xs ${msg.isMine ? 'text-indigo-600' : 'text-sky-600'}`}>
                                                     PDF Document
                                                 </p>
                                             </div>
-                                            <FiDownload className={`w-4 h-4 shrink-0 ${msg.isMine ? 'text-indigo-200' : 'text-gray-400'}`} />
+                                            <FiDownload className={`w-4 h-4 shrink-0 ${msg.isMine ? 'text-indigo-600' : 'text-sky-600'}`} />
                                         </a>
                                     ) : msg.audioUrl ? (
-                                        <audio controls src={msg.audioUrl} className="max-w-full outline-none h-10" />
+                                        <VoiceMessage src={msg.audioUrl} isMine={msg.isMine} />
                                     ) : (
-                                        <p className="text-sm">{msg.text}</p>
+                                        <p className="text-sm shadow-black shrink-0 whitespace-pre-wrap">{msg.text}</p>
                                     )}
                                 </div>
                                 {/* Delete button — shows on hover, after bubble for received messages */}
@@ -436,12 +582,13 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                                     </button>
                                 )}
                             </div>
-                            <span className="text-[10px] font-medium text-gray-400 mt-1 mx-1">
+                            <span className="text-[10px] font-semibold text-gray-600 mt-1 mx-1">
                                 {msg.time}
                             </span>
                         </div>
                     </div>
-                ))}
+                </div>
+                )})}
                 <div ref={messagesEndRef} />
             </div>
 
@@ -499,6 +646,7 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                             </div>
 
                             <textarea
+                                ref={textareaRef}
                                 value={messageInput}
                                 onChange={(e) => setMessageInput(e.target.value)}
                                 onKeyDown={(e) => {
@@ -508,7 +656,7 @@ export default function ChatWindow({ selectedUser, setSelectedUser, onMessageSen
                                     }
                                 }}
                                 placeholder="Type a message..."
-                                className="w-full bg-transparent border-none focus:outline-none resize-none px-2 py-2 max-h-32 min-h-[40px] text-sm text-gray-700"
+                                className="w-full bg-transparent border-none focus:outline-none resize-none px-2 py-2 max-h-32 min-h-[40px] text-sm text-gray-700 custom-scrollbar overscroll-contain"
                                 rows="1"
                             />
 

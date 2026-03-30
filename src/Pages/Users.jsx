@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { FiMenu, FiEdit2, FiTrash2, FiSearch, FiUserPlus, FiX, FiUser, FiMail, FiLock, FiPhone, FiShield } from "react-icons/fi";
+import { FiMenu, FiEdit2, FiTrash2, FiSearch, FiUserPlus, FiX, FiUser, FiMail, FiLock, FiPhone, FiShield, FiEye, FiEyeOff } from "react-icons/fi";
 import apiClient from "../api/apiClient";
 
 export default function Users({ setMobileOpen }) {
@@ -13,6 +13,7 @@ export default function Users({ setMobileOpen }) {
     const [formData, setFormData] = useState({ name: '', email: '', password: '', phone: '', role: 'staff' });
     const [formError, setFormError] = useState('');
     const [formLoading, setFormLoading] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
 
     // Delete confirmation
     const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -198,7 +199,7 @@ export default function Users({ setMobileOpen }) {
                                         <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex items-center">
-                                                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
+                                                    <div className="h-10 w-10 rounded-full bg-linear-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
                                                         {(user.name || 'U').charAt(0).toUpperCase()}
                                                     </div>
                                                     <div className="ml-4">
@@ -256,7 +257,7 @@ export default function Users({ setMobileOpen }) {
 
             {/* ── Add/Edit User Modal ──────────────────────────────────────────── */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4" onClick={closeModal}>
+                <div className="fixed inset-0 bg-black/50 z-70 flex items-center justify-center p-4" onClick={closeModal}>
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between p-5 border-b border-gray-100">
                             <h2 className="font-semibold text-gray-800 text-lg flex items-center gap-2">
@@ -315,14 +316,21 @@ export default function Users({ setMobileOpen }) {
                                 <div className="relative">
                                     <FiLock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                                     <input
-                                        type="password"
+                                        type={showPassword ? "text" : "password"}
                                         value={formData.password}
                                         onChange={(e) => setFormData(f => ({ ...f, password: e.target.value }))}
-                                        className="block w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none text-sm transition-all"
+                                        className="block w-full pl-10 pr-12 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none text-sm transition-all"
                                         placeholder={editingUser ? '••••••••' : 'Min 6 characters'}
                                         required={!editingUser}
                                         minLength={editingUser ? 0 : 6}
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-indigo-600 transition-colors"
+                                    >
+                                        {showPassword ? <FiEyeOff size={16} /> : <FiEye size={16} />}
+                                    </button>
                                 </div>
                             </div>
 
@@ -394,7 +402,7 @@ export default function Users({ setMobileOpen }) {
 
             {/* ── Delete Confirmation Modal ────────────────────────────────────── */}
             {deleteConfirm && (
-                <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4" onClick={() => setDeleteConfirm(null)}>
+                <div className="fixed inset-0 bg-black/50 z-70 flex items-center justify-center p-4" onClick={() => setDeleteConfirm(null)}>
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={(e) => e.stopPropagation()}>
                         <div className="p-6 text-center">
                             <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">

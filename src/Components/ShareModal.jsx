@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef } from "react";
-import { FiX, FiTrash2, FiSearch, FiChevronDown, FiCheck, FiColumns, FiEye, FiEdit2 } from "react-icons/fi";
+import { FiX, FiTrash2, FiSearch, FiChevronDown, FiCheck, FiColumns, FiEye, FiEdit2, FiLock, FiUnlock } from "react-icons/fi";
 import apiClient from "../api/apiClient";
+const Toggle = ({ checked, onChange, disabled }) => (
+    <div
+        onClick={() => !disabled && onChange(!checked)}
+        className={`w-8 h-4 flex items-center rounded-full p-0.5 transition-all ${disabled ? 'bg-gray-200 cursor-not-allowed' : 'cursor-pointer'} ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}
+        title={checked ? "Revoke Edit Access" : "Grant Edit Access"}
+    >
+        <div className={`bg-white w-3 h-3 rounded-full shadow-sm transform transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+    </div>
+);
 
 export default function ShareModal({ isOpen, onClose, sheetId }) {
     const [searchQuery, setSearchQuery] = useState("");
@@ -115,7 +124,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     const handleSelectUser = (user) => {
         setSelectedUser(user);
-        setSearchQuery(user.name + " (" + user.email + ")");
+        setSearchQuery("");
         setShowDropdown(false);
         setSearchResults([]);
         setShowColumnSection(true);
@@ -140,10 +149,16 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         setSharing(true);
         setError("");
         try {
+            // Filter out null/undefined permissions before sending
+            const filteredAccess = {};
+            Object.entries(columnAccess).forEach(([id, val]) => {
+                if (val) filteredAccess[id] = val;
+            });
+
             await apiClient.post(`/sheets/${sheetId}/share`, {
                 email,
                 role,
-                columnAccess
+                columnAccess: filteredAccess
             });
             setSearchQuery("");
             setSelectedUser(null);
@@ -157,15 +172,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         }
     };
 
-    const handleUpdateRole = async (userId, newRole) => {
-        try {
-            await apiClient.put(`/sheets/${sheetId}/permissions/${userId}`, { role: newRole });
-            fetchMembers();
-        } catch (err) {
-            console.error("Error updating role:", err);
-            setError("Failed to update role.");
-        }
-    };
+
 
     const handleRemove = async (userId) => {
         try {
@@ -207,10 +214,16 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
         try {
             const member = members.find(m => m.userId === editingMemberColPerms.userId);
             if (!member) return;
+            // Filter out null/undefined permissions
+            const filteredAccess = {};
+            Object.entries(editingMemberColPerms.columnAccess).forEach(([id, val]) => {
+                if (val) filteredAccess[id] = val;
+            });
+
             await apiClient.post(`/sheets/${sheetId}/share`, {
                 email: member.User?.email,
                 role: member.role,
-                columnAccess: editingMemberColPerms.columnAccess
+                columnAccess: filteredAccess
             });
             setEditingMemberColPerms(null);
             fetchMembers();
@@ -232,11 +245,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
     if (!isOpen) return null;
 
-    const roleOptions = [
-        { value: "admin", label: "Admin" },
-        { value: "editor", label: "Can edit" },
-        { value: "viewer", label: "Can view" }
-    ];
+
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -264,24 +273,53 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                         </label>
                         <div className="flex items-center gap-2">
                             <div className="relative flex-1" ref={dropdownRef}>
-                                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                                <input
-                                    type="text"
-                                    value={searchQuery}
-                                    onChange={(e) => {
-                                        setSearchQuery(e.target.value);
-                                        if (selectedUser) {
-                                            setSelectedUser(null);
-                                            setShowColumnSection(false);
-                                        }
-                                    }}
-                                    placeholder="Search by name or email..."
-                                    className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                                    onKeyDown={(e) => { if (e.key === "Enter" && selectedUser) handleShare(); }}
-                                    onFocus={() => {
-                                        if (searchResults.length > 0 && !selectedUser) setShowDropdown(true);
-                                    }}
-                                />
+                                {selectedUser ? (
+                                    <div className="flex items-center gap-2.5 pl-2 pr-1 py-1 bg-blue-50 border border-blue-200 rounded-lg animate-in fade-in zoom-in-95 duration-200">
+                                        {selectedUser.avatar ? (
+                                            <img src={selectedUser.avatar} alt={selectedUser.name} className="w-6 h-6 rounded-full object-cover shrink-0 shadow-sm" />
+                                        ) : (
+                                            <div className="w-6 h-6 rounded-full bg-blue-200 text-blue-700 flex items-center justify-center font-bold text-[10px] shrink-0 shadow-sm">
+                                                {selectedUser.name?.charAt(0).toUpperCase() || "U"}
+                                            </div>
+                                        )}
+                                        <div className="flex items-baseline gap-2 min-w-0">
+                                            <span className="text-sm font-semibold text-blue-900 truncate">{selectedUser.name}</span>
+                                            <span className="text-[11px] text-blue-600/70 truncate hidden sm:block">({selectedUser.email})</span>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                setSelectedUser(null);
+                                                setShowColumnSection(false);
+                                                setSearchQuery("");
+                                            }}
+                                            className="ml-auto p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors"
+                                            title="Remove selection"
+                                        >
+                                            <FiX className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => {
+                                                setSearchQuery(e.target.value);
+                                                if (selectedUser) {
+                                                    setSelectedUser(null);
+                                                    setShowColumnSection(false);
+                                                }
+                                            }}
+                                            placeholder="Search by name or email..."
+                                            className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                            onKeyDown={(e) => { if (e.key === "Enter" && selectedUser) handleShare(); }}
+                                            onFocus={() => {
+                                                if (searchResults.length > 0 && !selectedUser) setShowDropdown(true);
+                                            }}
+                                        />
+                                    </>
+                                )}
 
                                 {/* Search Results Dropdown */}
                                 {showDropdown && (
@@ -315,18 +353,7 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                                     </div>
                                 )}
                             </div>
-                            <div className="relative group shrink-0">
-                                <select
-                                    value={role}
-                                    onChange={(e) => setRole(e.target.value)}
-                                    className="appearance-none pl-3 pr-8 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                                >
-                                    {roleOptions.map(o => (
-                                        <option key={o.value} value={o.value}>{o.label}</option>
-                                    ))}
-                                </select>
-                                <FiChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-                            </div>
+
                         </div>
                     </div>
 
@@ -347,31 +374,40 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                             {/* Column List with Toggle */}
                             <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
                                 {columns.map((col) => {
-                                    const p = columnAccess[col.id] || 'edit';
+                                    const p = columnAccess[col.id] || null;
+                                    const isViewChecked = p !== null;
+                                    const isEditToggled = p === 'edit';
+
                                     return (
-                                        <div key={col.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100">
-                                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                <span className="text-sm text-gray-800 truncate">{col.name}</span>
-                                                <span className="text-[9px] bg-gray-100 text-gray-400 px-1 py-0.5 rounded uppercase font-medium shrink-0">{col.type}</span>
+                                        <div key={col.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100 transition-colors">
+                                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isViewChecked}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            setColPermission(col.id, 'view');
+                                                        } else {
+                                                            setColPermission(col.id, null);
+                                                        }
+                                                    }}
+                                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                                />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className={`text-sm ${isViewChecked ? 'text-gray-800' : 'text-gray-400'} truncate`}>{col.name}</span>
+                                                    <span className="text-[9px] text-gray-400 uppercase font-medium">{col.type}</span>
+                                                </div>
                                             </div>
-                                            <div className="flex bg-gray-100 p-0.5 rounded-lg shrink-0">
-                                                <button
-                                                    onClick={() => setColPermission(col.id, 'view')}
-                                                    className={`px-2 py-1 rounded-md text-[10px] font-medium flex items-center gap-1 transition-all ${
-                                                        p === 'view' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                                    }`}
-                                                >
-                                                    <FiEye className="w-3 h-3" /> View
-                                                </button>
-                                                <button
-                                                    onClick={() => setColPermission(col.id, 'edit')}
-                                                    className={`px-2 py-1 rounded-md text-[10px] font-medium flex items-center gap-1 transition-all ${
-                                                        p === 'edit' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                                                    }`}
-                                                >
-                                                    <FiEdit2 className="w-3 h-3" /> Edit
-                                                </button>
-                                            </div>
+                                            
+                                            {isViewChecked && (
+                                                <div className="flex items-center gap-2 shrink-0 animate-in fade-in slide-in-from-right-2 duration-200">
+                                                    <span className="text-[10px] text-gray-400 font-medium">Can Edit</span>
+                                                    <Toggle
+                                                        checked={isEditToggled}
+                                                        onChange={(val) => setColPermission(col.id, val ? 'edit' : 'view')}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -428,18 +464,6 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
                                                 </div>
 
                                                 <div className="flex items-center gap-2 shrink-0">
-                                                    <div className="relative">
-                                                        <select
-                                                            value={member.role}
-                                                            onChange={(e) => handleUpdateRole(member.userId, e.target.value)}
-                                                            className="appearance-none pl-2 pr-6 py-1 bg-transparent hover:bg-white border hover:border-gray-200 border-transparent rounded text-xs text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-                                                        >
-                                                            {roleOptions.map(o => (
-                                                                <option key={o.value} value={o.value}>{o.label}</option>
-                                                            ))}
-                                                        </select>
-                                                        <FiChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
-                                                    </div>
                                                     <button
                                                         onClick={() => handleRemove(member.userId)}
                                                         className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
@@ -464,28 +488,37 @@ export default function ShareModal({ isOpen, onClose, sheetId }) {
 
                                                         <div className="space-y-1 max-h-32 overflow-y-auto mt-2">
                                                             {columns.map(col => {
-                                                                const p = editingMemberColPerms.columnAccess[col.id] || 'edit';
+                                                                const p = editingMemberColPerms.columnAccess[col.id] || null;
+                                                                const isViewChecked = p !== null;
+                                                                const isEditToggled = p === 'edit';
+
                                                                 return (
-                                                                    <div key={col.id} className="flex items-center justify-between gap-2 px-2 py-1.5 bg-white rounded border border-gray-100">
-                                                                        <span className="text-xs text-gray-700 truncate flex-1">{col.name}</span>
-                                                                        <div className="flex bg-gray-100 p-0.5 rounded shrink-0">
-                                                                            <button
-                                                                                onClick={() => setMemberColPermission(col.id, 'view')}
-                                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all ${
-                                                                                    p === 'view' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-500'
-                                                                                }`}
-                                                                            >
-                                                                                View
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => setMemberColPermission(col.id, 'edit')}
-                                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all ${
-                                                                                    p === 'edit' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-500'
-                                                                                }`}
-                                                                            >
-                                                                                Edit
-                                                                            </button>
+                                                                    <div key={col.id} className="flex items-center justify-between gap-2 px-2 py-1.5 bg-white rounded border border-gray-100 transition-colors">
+                                                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={isViewChecked}
+                                                                                onChange={(e) => {
+                                                                                    if (e.target.checked) {
+                                                                                        setMemberColPermission(col.id, 'view');
+                                                                                    } else {
+                                                                                        setMemberColPermission(col.id, null);
+                                                                                    }
+                                                                                }}
+                                                                                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                                                            />
+                                                                            <span className={`text-xs ${isViewChecked ? 'text-gray-700' : 'text-gray-400'} truncate flex-1`}>{col.name}</span>
                                                                         </div>
+
+                                                                        {isViewChecked && (
+                                                                            <div className="flex items-center gap-1.5 shrink-0 animate-in fade-in slide-in-from-right-1 duration-200">
+                                                                                <span className="text-[9px] text-gray-400">Edit</span>
+                                                                                <Toggle
+                                                                                    checked={isEditToggled}
+                                                                                    onChange={(val) => setMemberColPermission(col.id, val ? 'edit' : 'view')}
+                                                                                />
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 );
                                                             })}

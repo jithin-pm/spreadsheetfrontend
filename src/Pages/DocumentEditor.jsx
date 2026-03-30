@@ -1,11 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { io } from "socket.io-client";
 import {
     FiCornerUpLeft, FiCornerUpRight, FiBold, FiItalic, FiUnderline,
     FiType, FiAlignLeft, FiAlignCenter, FiAlignRight, FiSearch,
     FiChevronDown, FiPlus, FiShare2, FiDownload, FiUser, FiArrowLeft, FiImage, FiX,
     FiEdit2, FiFilter, FiTrash2, FiScissors, FiCopy, FiColumns, FiAlignJustify, FiArrowUp, FiArrowDown, FiArrowRight, FiList, FiDelete, FiUploadCloud,
-    FiMessageSquare, FiSend
+    FiMessageSquare, FiSend, FiCalendar, FiFileText, FiFile, FiExternalLink, FiAlertCircle
 } from "react-icons/fi";
+
 import { BsPaintBucket, BsSortAlphaDown, BsSortAlphaDownAlt, BsFilter, BsWhatsapp } from "react-icons/bs";
 import { BiStrikethrough, BiArrowToLeft, BiArrowToRight } from "react-icons/bi";
 import { TbMathFunction } from "react-icons/tb";
@@ -25,59 +27,86 @@ export default function DocumentEditor({ docName, setActivePath }) {
     const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
 
     const [newColumnBgColor, setNewColumnBgColor] = useState(null);
-    const [newColumnIsRowColorSource, setNewColumnIsRowColorSource] = useState(false);
+    const [newColumnIsBold, setNewColumnIsBold] = useState(false);
+    const [newColumnIsItalic, setNewColumnIsItalic] = useState(false);
+    const [newColumnWidth, setNewColumnWidth] = useState(220);
     const [isRowColorPickerOpen, setIsRowColorPickerOpen] = useState(false);
+    const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
+    const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+    const [columnToDelete, setColumnToDelete] = useState(null);
+
+    // Column resize state
+    const [resizingCol, setResizingCol] = useState(null);
+    const resizeStartX = useRef(0);
+    const resizeStartWidth = useRef(0);
+
+    const handleColResizeStart = (e, col) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setResizingCol(col.id);
+        resizeStartX.current = e.clientX;
+        resizeStartWidth.current = col.width || 220;
+
+        const onMouseMove = (moveEvent) => {
+            const delta = moveEvent.clientX - resizeStartX.current;
+            const newWidth = Math.max(80, resizeStartWidth.current + delta);
+            setColumns(prev => prev.map(c => c.id === col.id ? { ...c, width: newWidth } : c));
+        };
+
+        const onMouseUp = async (upEvent) => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            setResizingCol(null);
+            const finalWidth = Math.max(80, resizeStartWidth.current + (upEvent.clientX - resizeStartX.current));
+            // Persist width to backend
+            try {
+                await apiClient.put(`/sheets/${docName}/columns/${col.id}`, { width: finalWidth });
+            } catch (err) {
+                console.error('Error saving column width:', err);
+            }
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    };
 
     const COLOR_PALETTE = [
         { name: 'None', value: null },
 
-        // Reds
+        // Reds & Pinks
         { name: 'Red', value: '#fee2e2' },
-        { name: 'Dark Red', value: '#fecaca' },
         { name: 'Rose', value: '#ffe4e6' },
+        { name: 'Pink', value: '#fce7f3' },
+
+        // Oranges & Yellows
+        { name: 'Orange', value: '#ffedd5' },
+        { name: 'Amber', value: '#fef3c7' },
+        { name: 'Yellow', value: '#fef9c3' },
 
         // Greens
+        { name: 'Lime', value: '#ecfccb' },
         { name: 'Green', value: '#dcfce7' },
-        { name: 'Dark Green', value: '#bbf7d0' },
-        { name: 'Mint', value: '#d1fae5' },
+        { name: 'Emerald', value: '#d1fae5' },
+
+        // Teals & Cyans
+        { name: 'Teal', value: '#ccfbf1' },
+        { name: 'Cyan', value: '#cffafe' },
 
         // Blues
-        { name: 'Blue', value: '#dbeafe' },
         { name: 'Sky Blue', value: '#e0f2fe' },
+        { name: 'Blue', value: '#dbeafe' },
         { name: 'Indigo', value: '#e0e7ff' },
-
-        // Yellows
-        { name: 'Yellow', value: '#fef9c3' },
-        { name: 'Amber', value: '#fef3c7' },
-        { name: 'Light Gold', value: '#fef08a' },
-
-        // Oranges
-        { name: 'Orange', value: '#ffedd5' },
-        { name: 'Peach', value: '#ffe4cc' },
-        { name: 'Coral', value: '#ffd6d6' },
 
         // Purples
         { name: 'Purple', value: '#f3e8ff' },
-        { name: 'Lavender', value: '#ede9fe' },
         { name: 'Violet', value: '#e9d5ff' },
-
-        // Pinks
-        { name: 'Pink', value: '#fce7f3' },
-        { name: 'Light Pink', value: '#fbcfe8' },
-        { name: 'Blush', value: '#ffe4e6' },
 
         // Neutrals
         { name: 'Gray', value: '#f3f4f6' },
-        { name: 'Cool Gray', value: '#e5e7eb' },
-        { name: 'Warm Gray', value: '#f5f5f4' },
         { name: 'Slate', value: '#e2e8f0' },
-
-        // Extra UI tones
-        { name: 'Cyan', value: '#cffafe' },
-        { name: 'Teal', value: '#ccfbf1' },
-        { name: 'Lime', value: '#ecfccb' },
-        { name: 'Emerald', value: '#d1fae5' },
+        { name: 'Cool Gray', value: '#e5e7eb' },
     ];
+
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -144,6 +173,84 @@ export default function DocumentEditor({ docName, setActivePath }) {
         fetchSheetData();
     }, [fetchSheetData]);
 
+    // Real-time updates via Socket.IO
+    useEffect(() => {
+        if (!docName) return;
+
+        const getSocketUrl = () => {
+            try {
+                const base = apiClient.defaults.baseURL || "";
+                if (base.startsWith('http')) {
+                    const url = new URL(base);
+                    return `${url.protocol}//${url.host}`;
+                }
+            } catch (e) {
+                console.error("Error parsing baseURL for socket", e);
+            }
+            return window.location.origin;
+        };
+        const socketUrl = getSocketUrl();
+        const token = localStorage.getItem('accessToken');
+        
+        const socket = io(socketUrl, {
+            auth: { token },
+            transports: ['websocket', 'polling']
+        });
+
+        socket.on("connect", () => {
+            console.log("Connected to spreadsheet socket");
+            socket.emit("join_sheet", docName);
+        });
+
+        socket.on("cell_updated", (data) => {
+            // Only update if it's for this sheet and NOT from current user to avoid race conditions with optimistic UI
+            // However, we want the computedValue from backend for formulas
+            setRows(prevRows => prevRows.map(row => {
+                if (row.id === data.rowId) {
+                    return {
+                        ...row,
+                        cells: row.cells.map(cell => {
+                            if (cell.columnId === data.columnId) {
+                                return { ...cell, rawValue: data.rawValue, computedValue: data.computedValue };
+                            }
+                            return cell;
+                        })
+                    };
+                }
+                return row;
+            }));
+        });
+
+        socket.on("formula_recalculated", (data) => {
+            setRows(prevRows => prevRows.map(row => {
+                const rowUpdates = data.cells.filter(c => c.rowId === row.id);
+                if (rowUpdates.length === 0) return row;
+                
+                return {
+                    ...row,
+                    cells: row.cells.map(cell => {
+                        const update = rowUpdates.find(u => u.columnId === cell.columnId);
+                        return update ? { ...cell, computedValue: update.computedValue } : cell;
+                    })
+                };
+            }));
+        });
+
+        socket.on("row_updated", (data) => {
+             if (data.action === "added") {
+                 fetchSheetData();
+             } else if (data.action === "deleted") {
+                 setRows(prev => prev.filter(r => r.id !== data.rowId));
+             } else if (data.action === "color_changed") {
+                 setRows(prev => prev.map(r => r.id === data.rowId ? { ...r, rowColor: data.rowColor } : r));
+             }
+        });
+
+        return () => {
+            socket.disconnect();
+        };
+    }, [docName]);
+
     // Context Menu State
     const [activeColumnMenu, setActiveColumnMenu] = useState(null);
     const menuRef = useRef(null);
@@ -151,7 +258,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
 
     // Cell Context Menu State
     const [activeCellMenu, setActiveCellMenu] = useState(null);
+    const [activeRowMenu, setActiveRowMenu] = useState(null);
     const cellMenuRef = useRef(null);
+    const rowMenuRef = useRef(null);
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -165,6 +274,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
             if (cellMenuRef.current && !cellMenuRef.current.contains(event.target)) {
                 setActiveCellMenu(null);
             }
+            if (rowMenuRef.current && !rowMenuRef.current.contains(event.target)) {
+                setActiveRowMenu(null);
+            }
         };
 
         document.addEventListener('mousedown', handleClickOutside);
@@ -172,44 +284,44 @@ export default function DocumentEditor({ docName, setActivePath }) {
             document.removeEventListener('mousedown', handleClickOutside);
         };
     }, []);
-
-    // Resizing State
-    const [resizingCol, setResizingCol] = useState(null);
-    const [startX, setStartX] = useState(0);
-    const [startWidth, setStartWidth] = useState(0);
-
-    // Global Mouse Handlers for Resizing
+    
+    // Ensure context menus stay within viewport
     useEffect(() => {
-        if (!resizingCol) return;
+        const adjustMenuPosition = (menuRef, menuState, setMenuState) => {
+            if (menuState && menuRef.current) {
+                const rect = menuRef.current.getBoundingClientRect();
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
 
-        const handleMouseMove = (e) => {
-            const diffX = e.clientX - startX;
-            const newWidth = Math.max(60, startWidth + diffX); // 60px minimum width
-            setColumns(cols => cols.map(c =>
-                c.id === resizingCol ? { ...c, width: newWidth } : c
-            ));
+                let newX = menuState.x;
+                let newY = menuState.y;
+                let adjusted = false;
+
+                // Adjust X if it goes off-screen to the right
+                if (rect.right > viewportWidth) {
+                    newX = viewportWidth - rect.width - 10;
+                    adjusted = true;
+                }
+                // Adjust Y if it goes off-screen at the bottom
+                if (rect.bottom > viewportHeight) {
+                    newY = viewportHeight - rect.height - 10;
+                    adjusted = true;
+                }
+                
+                // Safety check for top/left
+                if (newX < 10) newX = 10;
+                if (newY < 10) newY = 10;
+
+                if (adjusted) {
+                    setMenuState(prev => prev ? { ...prev, x: newX, y: newY } : null);
+                }
+            }
         };
 
-        const handleMouseUp = () => {
-            setResizingCol(null);
-            document.body.style.cursor = 'default';
-        };
+        if (activeCellMenu) adjustMenuPosition(cellMenuRef, activeCellMenu, setActiveCellMenu);
+        if (activeRowMenu) adjustMenuPosition(rowMenuRef, activeRowMenu, setActiveRowMenu);
+    }, [activeCellMenu, activeRowMenu]);
 
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
-        return () => {
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
-        };
-    }, [resizingCol, startX, startWidth]);
-
-    const handleResizeMouseDown = (e, colId, currentWidth) => {
-        e.preventDefault(); // prevent text selection
-        setResizingCol(colId);
-        setStartX(e.clientX);
-        setStartWidth(currentWidth || 220);
-        document.body.style.cursor = 'col-resize';
-    };
 
     // Modal State
     const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
@@ -227,7 +339,14 @@ export default function DocumentEditor({ docName, setActivePath }) {
     // Image Gallery Modal State
     const [isImageGalleryOpen, setIsImageGalleryOpen] = useState(false);
     const [activeImageCell, setActiveImageCell] = useState(null); // { rowId, colId, images: [] }
+    const [selectedPreviewImage, setSelectedPreviewImage] = useState(null); // URL for zoomed preview
     const [isUploadingImages, setIsUploadingImages] = useState(false);
+    // PDF Gallery Modal State
+    const [isPDFGalleryOpen, setIsPDFGalleryOpen] = useState(false);
+    const [activePDFCell, setActivePDFCell] = useState(null); // { rowId, colId, documents: [] }
+    const [isUploadingPDFs, setIsUploadingPDFs] = useState(false);
+    const pdfInputRef = useRef(null);
+
     const fileInputRef = useRef(null);
 
     // Calculate Bar State: { [colId]: 'total' | 'average' | null }
@@ -265,7 +384,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
     }, [docName, fetchCommentCounts]);
 
     // Open comment panel for a cell — upserts cell if it doesn't exist yet
-    const openCommentPanel = async (cellId, rowId, columnId) => {
+    const openCommentPanel = async (cellId, rowId, columnId, permission) => {
         if (!docName) return;
 
         let resolvedCellId = cellId;
@@ -289,7 +408,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
 
         if (!resolvedCellId) return;
 
-        setCommentPanelCell({ cellId: resolvedCellId, sheetId: docName });
+        setCommentPanelCell({ cellId: resolvedCellId, sheetId: docName, permission });
         setCommentsLoading(true);
         setCommentsList([]);
         setNewCommentText('');
@@ -428,18 +547,21 @@ export default function DocumentEditor({ docName, setActivePath }) {
     };
 
     const columnTypes = [
-        { id: 'text', icon: <span className="text-blue-500 font-serif text-lg">T</span>, name: 'Text', desc: 'Insert alpha numeric values in a cell' },
-        { id: 'number', icon: <span className="text-blue-500 font-medium text-sm">123</span>, name: 'Number', desc: 'Insert numbers in a cell' },
-        { id: 'date', icon: <span className="text-blue-500 text-lg">📅</span>, name: 'Date', desc: 'Pick or type a date value' },
-        { id: 'currency', icon: <span className="text-blue-500 text-lg">₹</span>, name: 'Currency', desc: 'Format number to currency' },
-        { id: 'formula', icon: <span className="text-blue-500 italic font-serif text-lg">fx</span>, name: 'Formula', desc: 'Create formula for automatic calculation' },
-        { id: 'multi_image', icon: <FiImage className="text-blue-500 w-5 h-5" />, name: 'Image', desc: 'Add multiple images in a cell' },
-        { id: 'comment', icon: <FiMessageSquare className="text-blue-500 w-5 h-5" />, name: 'Comments', desc: 'Add comments to a cell' }
+        { id: 'text', icon: <span className="text-blue-500 font-serif text-base">T</span>, name: 'Text', desc: 'Insert alpha numeric values in a cell' },
+        { id: 'number', icon: <span className="text-blue-500 font-medium text-xs">123</span>, name: 'Number', desc: 'Insert numbers in a cell' },
+        { id: 'date', icon: <FiCalendar className="text-blue-500 text-base" />, name: 'Date', desc: 'Pick or type a date value' },
+
+        { id: 'currency', icon: <span className="text-blue-500 text-base">₹</span>, name: 'Currency', desc: 'Format number to currency' },
+        { id: 'formula', icon: <span className="text-blue-500 italic font-serif text-base">fx</span>, name: 'Formula', desc: 'Create formula for automatic calculation' },
+        { id: 'multi_image', icon: <FiImage className="text-blue-500 w-4 h-4" />, name: 'Image', desc: 'Add multiple images in a cell' },
+        { id: 'pdf', icon: <FiFileText className="text-blue-500 w-4 h-4" />, name: 'PDF', desc: 'Add multiple PDF documents in a cell' },
+        { id: 'comment', icon: <FiMessageSquare className="text-blue-500 w-4 h-4" />, name: 'Comments', desc: 'Add comments to a cell' }
     ];
 
     const handleAddColumnClick = () => {
         setNewColumnName('');
         setNewColumnType('text');
+        setNewColumnWidth(220);
         setEditingColId(null);
         setIsColumnModalOpen(true);
     };
@@ -449,16 +571,21 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setNewColumnType(col.type);
         setNewColumnCurrencyCode(col.currencyCode || 'INR');
         setNewColumnBgColor(col.bgColor || null);
-        const opts = typeof col.options === 'string' ? JSON.parse(col.options) : (col.options || {});
-        setNewColumnIsRowColorSource(opts.isRowColorSource || false);
+        setNewColumnIsBold(col.isBold || false);
+        setNewColumnIsItalic(col.isItalic || false);
+        setNewColumnWidth(col.width || 220);
         setEditingColId(col.id);
         setIsColumnModalOpen(true);
         setActiveColumnMenu(null);
     };
 
-    const handleUpdateColumn = async () => {
+    const handleUpdateColumn = () => {
         if (!newColumnName.trim()) return;
+        setShowUpdateConfirmModal(true);
+    };
 
+    const performUpdateColumn = async () => {
+        setShowUpdateConfirmModal(false);
         // If it's a formula, intercept the save to open the formula builder
         if (newColumnType === 'formula') {
             setPendingFormulaColumnDesc({
@@ -472,13 +599,13 @@ export default function DocumentEditor({ docName, setActivePath }) {
             return;
         }
 
-        await saveColumnToBackend(newColumnName, newColumnType, editingColId, undefined, newColumnBgColor, newColumnIsRowColorSource);
+        await saveColumnToBackend(newColumnName, newColumnType, editingColId, undefined, newColumnBgColor, newColumnIsBold, newColumnIsItalic, newColumnWidth);
     };
 
-    const saveColumnToBackend = async (name, type, colId, formulaExpr = undefined, bgColor = null, isRowColorSource = false) => {
+    const saveColumnToBackend = async (name, type, colId, formulaExpr = undefined, bgColor = null, isBold = false, isItalic = false, width = 220) => {
         try {
             const currencyPayload = type === 'currency' ? { currencyCode: newColumnCurrencyCode } : {};
-            const options = { isRowColorSource };
+            const options = {};
 
             if (colId) {
                 // Update existing column
@@ -486,6 +613,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
                     name,
                     type,
                     bgColor,
+                    isBold,
+                    isItalic,
+                    width,
                     options,
                     ...currencyPayload,
                     ...(formulaExpr ? { formulaExpr } : {})
@@ -493,7 +623,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
 
                 setColumns(cols => cols.map(c =>
                     c.id === colId
-                        ? { ...c, name, type, formulaExpr, bgColor, options, ...currencyPayload }
+                        ? { ...c, name, type, formulaExpr, bgColor, isBold, isItalic, width, options, ...currencyPayload }
                         : c
                 ));
 
@@ -504,8 +634,10 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 const response = await apiClient.post(`/sheets/${docName}/columns`, {
                     name,
                     type,
-                    width: 220,
+                    width,
                     bgColor,
+                    isBold,
+                    isItalic,
                     options,
                     ...currencyPayload,
                     ...(formulaExpr ? { formulaExpr } : {})
@@ -527,25 +659,70 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setFormulaString('');
     };
 
-    const handleRowColorChange = async (color) => {
+    const handleRowStyleChange = async (stylePatch) => {
         if (!focusedCell) {
-            alert("Please select a cell in the row you want to color.");
+            alert("Please select a cell in the row you want to style.");
             return;
         }
         const rowId = focusedCell.rowId;
-        try {
-            await apiClient.patch(`/sheets/${docName}/rows/${rowId}/color`, { rowColor: color });
-            setRows(currentRows => currentRows.map(row =>
-                row.id === rowId ? { ...row, rowColor: color } : row
-            ));
-        } catch (error) {
-            console.error("Error updating row color:", error);
-        }
+        updateRowStyle(rowId, stylePatch);
         setIsRowColorPickerOpen(false);
     };
 
+    const updateRowStyle = async (rowId, stylePatch) => {
+        try {
+            // stylePatch = { rowColor, isBold, isItalic }
+            // Optimistic update
+            setRows(currentRows => currentRows.map(row =>
+                row.id === rowId ? { ...row, ...stylePatch } : row
+            ));
+            
+            // Sync with backend
+            await apiClient.patch(`/sheets/${docName}/rows/${rowId}/color`, stylePatch);
+        } catch (error) {
+            console.error("Error updating row style:", error);
+            fetchSheetData();
+        }
+    };
+
+    const updateCellStyle = async (rowId, columnId, stylePatch) => {
+        try {
+            // Optimistic update — merge stylePatch into the matching cell
+            setRows(currentRows => currentRows.map(row => {
+                if (row.id === rowId) {
+                    const cells = row.cells || [];
+                    const cellExists = cells.some(c => c.columnId === columnId);
+                    const newCells = cellExists
+                        ? cells.map(c => c.columnId === columnId ? { ...c, ...stylePatch } : c)
+                        : [...cells, { columnId, rawValue: '', computedValue: '', ...stylePatch }];
+                    return { ...row, cells: newCells };
+                }
+                return row;
+            }));
+
+            // Sync with backend
+            await apiClient.post(`/sheets/${docName}/cells`, {
+                rowId,
+                columnId,
+                ...stylePatch
+            });
+        } catch (error) {
+            console.error("Error updating cell style:", error);
+            fetchSheetData();
+        }
+    };
+
     // --- Column Menu Actions ---
-    const handleDeleteColumn = async (colId) => {
+    const handleDeleteClick = (col) => {
+        setColumnToDelete(col);
+        setShowDeleteConfirmModal(true);
+        setActiveColumnMenu(null);
+    };
+
+    const performDeleteColumn = async () => {
+        if (!columnToDelete) return;
+        const colId = columnToDelete.id;
+        setShowDeleteConfirmModal(false);
         try {
             await apiClient.delete(`/sheets/${docName}/columns/${colId}`);
             setColumns(cols => cols.filter(c => c.id !== colId));
@@ -558,8 +735,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
             fetchSheetData();
         } catch (error) {
             console.error("Error deleting column:", error);
+            alert("Failed to delete column.");
         }
-        setActiveColumnMenu(null);
+        setColumnToDelete(null);
     };
 
     const handleAddColumnDirection = async (colId, direction) => {
@@ -663,8 +841,20 @@ export default function DocumentEditor({ docName, setActivePath }) {
     };
 
     // --- Cell Menu Actions ---
+    const handleRowContextMenu = (e, rowIndex) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveCellMenu(null); // Close cell menu if open
+        setActiveRowMenu({
+            x: e.clientX,
+            y: e.clientY,
+            rowIndex
+        });
+    };
+
     const handleCellContextMenu = (e, rowIndex, colId) => {
         e.preventDefault();
+        setActiveRowMenu(null); // Close row menu if open
         setActiveCellMenu({
             x: e.clientX,
             y: e.clientY,
@@ -674,16 +864,31 @@ export default function DocumentEditor({ docName, setActivePath }) {
         setActiveColumnMenu(null); // Close column menu if open
     };
 
-    const handleCellAction = async (action) => {
-        if (!activeCellMenu) return;
+    const handleCellAction = async (action, overrideRowIndex = null, overrideColId = null) => {
+        let rowIndex = overrideRowIndex;
+        let colId = overrideColId;
 
-        const { rowIndex, colId } = activeCellMenu;
-        const row = rows[rowIndex];
+        if (rowIndex === null && activeCellMenu) {
+            rowIndex = activeCellMenu.rowIndex;
+            colId = activeCellMenu.colId;
+        }
+
+        if (rowIndex === null) return;
+
+        // Use filteredRows to get the correct row when filters are active
+        const row = filteredRows[rowIndex];
+        if (!row) return;
 
         try {
             switch (action) {
                 case 'add_row_above':
+                    await apiClient.post(`/sheets/${docName}/rows`, { targetRowId: row.id, position: 'above' });
+                    fetchSheetData();
+                    break;
                 case 'add_row_below':
+                    await apiClient.post(`/sheets/${docName}/rows`, { targetRowId: row.id, position: 'below' });
+                    fetchSheetData();
+                    break;
                 case 'add_row':
                     await apiClient.post(`/sheets/${docName}/rows`, {});
                     fetchSheetData();
@@ -697,6 +902,18 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 case 'erase_data':
                     if (row && row.id && colId) {
                         await handleCellChange(row.id, colId, "");
+                    }
+                    break;
+                case 'toggle_bold':
+                    if (row && colId) {
+                        const cell = row.cells?.find(c => c.columnId === colId);
+                        await updateCellStyle(row.id, colId, { isBold: !cell?.isBold });
+                    }
+                    break;
+                case 'toggle_italic':
+                    if (row && colId) {
+                        const cell = row.cells?.find(c => c.columnId === colId);
+                        await updateCellStyle(row.id, colId, { isItalic: !cell?.isItalic });
                     }
                     break;
                 default:
@@ -778,11 +995,11 @@ export default function DocumentEditor({ docName, setActivePath }) {
     };
 
     // --- Multi-Image Upload Logic ---
-    const handleImageGalleryOpen = (rowId, colId, value) => {
+    const handleImageGalleryOpen = (rowId, colId, value, permission) => {
         let parsedImages = [];
         try { if (value) parsedImages = JSON.parse(value); } catch (e) { }
         if (!Array.isArray(parsedImages)) parsedImages = [];
-        setActiveImageCell({ rowId, colId, images: parsedImages });
+        setActiveImageCell({ rowId, colId, images: parsedImages, permission });
         setIsImageGalleryOpen(true);
     };
 
@@ -825,6 +1042,65 @@ export default function DocumentEditor({ docName, setActivePath }) {
         const newImagesList = activeImageCell.images.filter((_, i) => i !== index);
         setActiveImageCell(prev => ({ ...prev, images: newImagesList }));
         await handleCellChange(activeImageCell.rowId, activeImageCell.colId, JSON.stringify(newImagesList));
+    };
+
+    // --- PDF Upload Logic ---
+    const handlePDFGalleryOpen = (rowId, colId, value, permission) => {
+        let parsedPDFs = [];
+        try { if (value) parsedPDFs = JSON.parse(value); } catch (e) { }
+        if (!Array.isArray(parsedPDFs)) parsedPDFs = [];
+        setActivePDFCell({ rowId, colId, documents: parsedPDFs, permission });
+        setIsPDFGalleryOpen(true);
+    };
+
+    const handlePDFsSelected = async (e) => {
+        if (!e.target.files?.length) return;
+        
+        const files = Array.from(e.target.files);
+        const nonPDFs = files.filter(f => f.type !== 'application/pdf');
+        if (nonPDFs.length > 0) {
+            alert("Only PDF files are allowed in this column.");
+            e.target.value = null;
+            return;
+        }
+
+        setIsUploadingPDFs(true);
+        const formData = new FormData();
+        files.forEach(f => formData.append("files", f));
+
+        try {
+            const resp = await apiClient.post(`/media/upload-multiple`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            const uploadedMeta = resp.data.data.map(f => ({
+                url: f.fileUrl,
+                fileName: f.originalName,
+                fileSize: f.sizeBytes,
+                mimeType: f.mimeType,
+                uploadedAt: f.createdAt || new Date().toISOString()
+            }));
+
+            const newPDFList = [...(activePDFCell.documents || []), ...uploadedMeta];
+
+            // Update modal state
+            setActivePDFCell(prev => ({ ...prev, documents: newPDFList }));
+
+            // Save to cell instantly
+            await handleCellChange(activePDFCell.rowId, activePDFCell.colId, JSON.stringify(newPDFList));
+
+        } catch (error) {
+            console.error("Failed to upload PDFs:", error);
+            alert("Upload failed. Validation error or file too large.");
+        } finally {
+            setIsUploadingPDFs(false);
+            e.target.value = null; // reset file input
+        }
+    };
+
+    const handleDeletePDF = async (index) => {
+        const newPDFList = activePDFCell.documents.filter((_, i) => i !== index);
+        setActivePDFCell(prev => ({ ...prev, documents: newPDFList }));
+        await handleCellChange(activePDFCell.rowId, activePDFCell.colId, JSON.stringify(newPDFList));
     };
 
     const handleCellBlur = async (rowId, columnId, value) => {
@@ -945,7 +1221,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                         }
                     } else if (col.type === 'comment') {
                         const count = cell?.id ? (commentCounts[cell.id] || 0) : 0;
-                        val = count > 0 ? `${count} comment${count > 1 ? 's' : ''}` : 'Tap to add comments.';
+                        val = count > 0 ? `${count} comment${count > 1 ? 's' : ''}` : (col.permission === 'view' ? '' : 'Tap to add comments.');
                     } else if (col.type === 'multi_image' && val) {
                         try {
                             const imgs = JSON.parse(val);
@@ -1050,7 +1326,9 @@ export default function DocumentEditor({ docName, setActivePath }) {
             case 'number': return <span className="text-green-500 text-sm font-medium shrink-0">123</span>;
             case 'currency': return <span className="text-blue-400 text-sm shrink-0">₹</span>;
             case 'formula': return <span className="text-purple-400 text-sm italic font-serif shrink-0">fx</span>;
-            case 'date': return <span className="text-blue-400 text-sm shrink-0">📅</span>;
+            case 'date': return <FiCalendar className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+            case 'pdf': return <FiFileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+
             case 'comment': return <FiMessageSquare className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
             case 'text':
             default: return <span className="text-blue-400 font-serif text-sm shrink-0">T</span>;
@@ -1060,7 +1338,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
     return (
         <div className="flex flex-col h-screen bg-white overflow-hidden w-full">
             {/* Top Navigation */}
-            <div className="bg-[#0f172a] text-white flex items-center justify-between px-4 py-2 shrink-0">
+            <div className="bg-[#0f172a] text-white flex items-center justify-between px-4 py-4 shrink-0">
                 <div className="flex items-center gap-4">
                     <button
                         onClick={() => setActivePath('/my-files')}
@@ -1077,9 +1355,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                             <div className="flex items-center gap-2">
                                 <h1 className="font-semibold text-lg">{sheetData?.name || "Loading..."}</h1>
                             </div>
-                            <div className="flex items-center gap-4 text-xs text-blue-300 mt-1">
-                                <button className="hover:text-blue-100 transition-colors">+ Add Pages</button>
-                            </div>
+                            
                         </div>
                     </div>
                 </div>
@@ -1094,107 +1370,30 @@ export default function DocumentEditor({ docName, setActivePath }) {
                             <span className="hidden sm:block">Share</span>
                         </button>
                     )}
-                    <button
+                    {/* <button
                         onClick={handleDownloadBackup}
                         className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors"
                     >
                         <FiDownload className="w-4 h-4" />
                         <span className="hidden sm:block">Backup</span>
-                    </button>
-                    <button
-                        onClick={handleExportPDF}
-                        className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors"
-                    >
-                        <FiDownload className="w-4 h-4" />
-                        <span className="hidden sm:block">Download</span>
-                    </button>
-                    <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-sm font-semibold ml-2 border border-white/20">
-                        J
-                    </div>
+                    </button> */}
+
+                    {/* User profile placeholder removed as it was static */}
                 </div>
             </div>
 
-            {/* Formatting Toolbar */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between px-2 py-2 gap-2 sm:gap-0 border-b border-gray-200 bg-white shrink-0">
-                <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide w-full sm:w-auto pb-1 sm:pb-0">
-                    {/* Undo/Redo */}
-                    <div className="flex items-center px-2 border-r border-gray-200 gap-1">
-                        <button className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"><FiCornerUpLeft className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"><FiCornerUpRight className="w-4 h-4" /></button>
-                    </div>
-
-                    {/* Text Formatting */}
-                    <div className="flex items-center px-2 border-r border-gray-200 gap-1">
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors font-bold"><FiBold className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors italic"><FiItalic className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors underline"><FiUnderline className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"><BiStrikethrough className="w-5 h-5 -mx-0.5" /></button>
-                        <div className="flex items-center px-1 group cursor-pointer hover:bg-gray-100 rounded py-1 transition-colors">
-                            <FiType className="w-4 h-4 text-gray-600 border-b-2 border-black" />
-                            <FiChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
-                        </div>
-                        <div className="relative" ref={rowColorPickerRef}>
-                            <div 
-                                onClick={() => setIsRowColorPickerOpen(!isRowColorPickerOpen)}
-                                className="flex items-center px-1 group cursor-pointer hover:bg-gray-100 rounded py-1 transition-colors"
-                            >
-                                <BsPaintBucket className="w-4 h-4 text-gray-600 border-b-2 border-transparent" />
-                                <FiChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
-                            </div>
-                            
-                            {isRowColorPickerOpen && (
-                                <div className="absolute top-full left-0 mt-2 p-3 bg-white rounded-xl shadow-xl border border-gray-100 z-[100] w-48 animate-in fade-in zoom-in-95 duration-100">
-                                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 px-1">Row Background</div>
-                                    <div className="grid grid-cols-4 gap-2">
-                                        {COLOR_PALETTE.map((color) => (
-                                            <button
-                                                key={`row-color-${color.name}`}
-                                                onClick={() => handleRowColorChange(color.value)}
-                                                className="w-8 h-8 rounded-lg border border-gray-100 hover:scale-110 transition-transform shadow-sm relative group"
-                                                style={{ backgroundColor: color.value || '#fff' }}
-                                                title={color.name}
-                                            >
-                                                {!color.value && <FiX className="w-3 h-3 text-gray-400 mx-auto" />}
-                                                <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/5 transition-colors" />
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Alignment */}
-                    <div className="flex items-center px-2 border-r border-gray-200 gap-1">
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors bg-gray-100"><FiAlignLeft className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"><FiAlignCenter className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"><FiAlignRight className="w-4 h-4" /></button>
-                    </div>
-
-                    {/* Sort/Filter */}
-                    <div className="flex items-center px-2 gap-1">
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors flex items-center gap-1">
-                            <BsSortAlphaDown className="w-4 h-4" />
-                            <FiChevronDown className="w-3 h-3 text-gray-400" />
-                        </button>
-                        <button className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors text-xl">
-                            <BsFilter className="w-5 h-5" />
-                        </button>
-                    </div>
-                </div>
-
-                <div className="relative pr-2 sm:pr-4 shrink-0 sm:self-auto self-end w-full sm:w-auto flex items-center">
-                    <div className="relative w-full sm:w-72">
-                        <input
-                            type="text"
-                            placeholder="search values..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="pl-4 pr-10 py-1.5 bg-white border border-blue-400 rounded-full text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full text-gray-700 placeholder:text-gray-400"
-                        />
-                        <div className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center shadow-sm cursor-pointer hover:bg-blue-600 transition-colors">
-                            <FiSearch className="w-3.5 h-3.5 text-white" />
-                        </div>
+            {/* Search Bar */}
+            <div className="flex items-center justify-end px-3 py-2 border-b border-gray-200 bg-white shrink-0">
+                <div className="relative w-72">
+                    <input
+                        type="text"
+                        placeholder="search values..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-4 pr-10 py-1.5 bg-white border border-blue-400 rounded-full text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 w-full text-gray-700 placeholder:text-gray-400"
+                    />
+                    <div className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center shadow-sm cursor-pointer hover:bg-blue-600 transition-colors">
+                        <FiSearch className="w-3.5 h-3.5 text-white" />
                     </div>
                 </div>
             </div>
@@ -1208,18 +1407,35 @@ export default function DocumentEditor({ docName, setActivePath }) {
                             {columns.map(col => (
                                 <th
                                     key={col.id}
-                                    className="border-b border-r border-gray-200 py-2 px-3 text-xs text-gray-500 font-medium hover:bg-gray-50 transition-colors bg-white relative group select-none"
-                                    style={{ width: col.width || 220, minWidth: col.width || 220 }}
+                                    className={`border-b border-r border-gray-200 py-2 px-3 text-xs font-medium transition-colors relative group select-none ${resizingCol === col.id ? 'bg-blue-50/20' : (!col.bgColor ? 'bg-white hover:bg-gray-50 text-gray-500' : 'text-gray-800')}`}
+                                    style={{ width: col.width || 220, minWidth: col.width || 220, backgroundColor: col.bgColor || undefined }}
                                 >
+                                    {/* Resize handle */}
+                                    <div
+                                        onMouseDown={(e) => handleColResizeStart(e, col)}
+                                        className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize z-30 group/resize flex items-center justify-center hover:bg-blue-500/10 transition-colors"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <div className="w-1 h-full bg-blue-500/0 group-hover/resize:bg-blue-500/40 transition-all relative">
+                                            {/* Center grabber pill */}
+                                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-6 bg-blue-500 opacity-0 group-hover/resize:opacity-100 rounded-full shadow-sm transition-opacity" />
+                                        </div>
+                                    </div>
                                     <div
                                         className="flex items-center justify-between"
-                                        onClick={() => setActiveColumnMenu(activeColumnMenu === col.id ? null : col.id)}
+                                        onClick={() => {
+                                            if (col.permission !== 'view') {
+                                                setActiveColumnMenu(activeColumnMenu === col.id ? null : col.id);
+                                            }
+                                        }}
                                     >
                                         <div className="flex items-center gap-2 overflow-hidden flex-1 opacity-80 group-hover:opacity-100 transition-opacity">
                                             {renderColumnIcon(col.type)}
-                                            <span className="truncate block font-medium group-hover:text-blue-600 transition-colors cursor-pointer">{col.name}</span>
+                                            <span className={`truncate block font-medium transition-colors ${col.permission !== 'view' ? 'group-hover:text-blue-600 cursor-pointer' : 'cursor-default'}`}>{col.name}</span>
                                         </div>
-                                        <FiChevronDown className={`w-3.5 h-3.5 shrink-0 ml-2 cursor-pointer transition-transform ${activeColumnMenu === col.id ? 'text-blue-600 rotate-180 opacity-100' : 'text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100'}`} />
+                                        {col.permission !== 'view' && (
+                                            <FiChevronDown className={`w-3.5 h-3.5 shrink-0 ml-2 cursor-pointer transition-transform ${activeColumnMenu === col.id ? 'text-blue-600 rotate-180 opacity-100' : 'text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100'}`} />
+                                        )}
                                     </div>
 
                                     {/* Column Menu Dropdown */}
@@ -1235,53 +1451,18 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                 <FiEdit2 className="w-4 h-4 text-gray-400" />
                                                 Rename/Edit Column
                                             </button>
-                                            <button
-                                                onClick={() => handleSortColumn(col.id, 'desc')}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <BsSortAlphaDownAlt className="w-4 h-4 text-gray-400" />
-                                                Sort Descending
-                                            </button>
-                                            <button
-                                                onClick={() => handleSortColumn(col.id, 'asc')}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <BsSortAlphaDown className="w-4 h-4 text-gray-400" />
-                                                Sort Ascending
-                                                Sort A-Z
-                                            </button>
-                                            <button
-                                                onClick={() => handleSort(col.id, 'desc')}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <BsSortAlphaDownAlt className="w-4 h-4 text-gray-400" />
-                                                Sort Z-A
-                                            </button>
-                                            <button
-                                                onClick={() => handleFilterColumnClick(col.id)}
-                                                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                            >
-                                                <FiFilter className="w-4 h-4 text-gray-400" />
-                                                Filter by value
-                                            </button>
-
                                             {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
                                                 <>
                                                     <div className="my-1 border-t border-gray-100"></div>
-                                                    <button
-                                                        onClick={() => handleRenameColumnClick(col.id)}
-                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                                    >
-                                                        <FiEdit2 className="w-4 h-4 text-gray-400" />
-                                                        Edit Column
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleSetFormulaClick(col.id)}
-                                                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
-                                                    >
-                                                        <TbMathFunction className="w-4 h-4 text-blue-500" />
-                                                        Formula Builder
-                                                    </button>
+                                                    {col.type === 'formula' && (
+                                                        <button
+                                                            onClick={() => handleSetFormulaClick(col.id)}
+                                                            className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                                                        >
+                                                            <TbMathFunction className="w-4 h-4 text-blue-500" />
+                                                            Formula Builder
+                                                        </button>
+                                                    )}
                                                     <div className="my-1 border-t border-gray-100"></div>
                                                     <button
                                                         onClick={() => handleAddColumnDirection(col.id, 'left')}
@@ -1299,7 +1480,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                     </button>
                                                     <div className="my-1 border-t border-gray-100"></div>
                                                     <button
-                                                        onClick={() => handleDeleteColumn(col.id)}
+                                                        onClick={() => handleDeleteClick(col)}
                                                         className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors"
                                                     >
                                                         <FiTrash2 className="w-4 h-4 text-red-400" />
@@ -1309,14 +1490,6 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                             )}
                                         </div>
                                     )}
-                                    {/* Resize Handle */}
-                                    <div
-                                        className={`absolute -right-2 top-0 bottom-0 w-4 cursor-col-resize z-20 flex justify-center ${resizingCol === col.id ? 'opacity-100' : 'opacity-0 hover:opacity-100 transition-opacity'}`}
-                                        onMouseDown={(e) => handleResizeMouseDown(e, col.id, col.width)}
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <div className={`w-[3px] h-full ${resizingCol === col.id ? 'bg-blue-500' : 'bg-blue-400'}`}></div>
-                                    </div>
                                 </th>
                             ))}
                             {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
@@ -1400,7 +1573,10 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                         className="hover:bg-blue-50/10 transition-colors group text-[#334155]"
                                         style={{ backgroundColor: computedRowBg }}
                                     >
-                                        <td className={`border-b border-r border-gray-200 text-center py-2 text-[13px] text-gray-500 group-hover:bg-gray-100/50 transition-colors w-12 sticky left-0 z-10 min-w-12 font-medium ${computedRowBg === 'transparent' ? 'bg-gray-50/50' : ''}`}>
+                                        <td 
+                                            className={`border-b border-r border-gray-200 text-center py-2 text-[13px] text-gray-500 group-hover:bg-gray-100/50 transition-colors w-12 sticky left-0 z-10 min-w-12 font-medium cursor-pointer ${computedRowBg === 'transparent' ? 'bg-gray-50/50' : ''} ${activeRowMenu?.rowIndex === index ? 'bg-blue-100' : ''}`}
+                                            onContextMenu={(e) => handleRowContextMenu(e, index)}
+                                        >
                                             {row.order !== undefined ? row.order + 1 : index + 1}
                                         </td>
                                         {columns.map((col) => {
@@ -1426,11 +1602,11 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                             return (
                                                 <td
                                                     key={col.id}
-                                                    className={`border-b border-r border-gray-200 p-0 relative h-9 ${resizingCol === col.id ? 'bg-blue-50/10' : ''} ${activeCellMenu?.rowIndex === index && activeCellMenu?.colId === col.id ? 'ring-2 ring-blue-500 z-10 bg-blue-50/10' : ''}`}
+                                                    className={`border-b border-r border-gray-200 p-0 relative min-h-9 h-auto ${resizingCol === col.id ? 'bg-blue-50/10' : ''} ${activeCellMenu?.rowIndex === index && activeCellMenu?.colId === col.id ? 'ring-2 ring-blue-500 z-10 bg-blue-50/10' : ''}`}
                                                     style={{
                                                         width: col.width || 220,
                                                         minWidth: col.width || 220,
-                                                        backgroundColor: col.bgColor || computedRowBg || 'transparent'
+                                                        backgroundColor: cell?.bgColor || col.bgColor || computedRowBg || 'transparent'
                                                     }}
                                                     onContextMenu={(e) => handleCellContextMenu(e, index, col.id)}
                                                 >
@@ -1460,26 +1636,28 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                     )}
                                                     {col.type === 'comment' ? (
                                                         <div
-                                                            className="w-full h-full flex items-center px-2 cursor-pointer hover:bg-blue-50/30 transition-colors"
-                                                            onClick={() => openCommentPanel(cell?.id, row.id, col.id)}
+                                                            className="w-full min-h-9 flex items-center px-2 cursor-pointer hover:bg-blue-50/30 transition-colors"
+                                                            onClick={() => openCommentPanel(cell?.id, row.id, col.id, cell?.permission)}
                                                         >
                                                             {cellCommentCount > 0 ? (
                                                                 <div className="flex items-center gap-2 overflow-hidden w-full">
-                                                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+                                                                    <div className="w-6 h-6 rounded-full bg-linear-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0">
                                                                         {cellCommentCount}
                                                                     </div>
-                                                                    <span className="text-xs text-gray-600 truncate">
+                                                                    <span className="text-xs text-gray-600 whitespace-pre-wrap wrap-break-word py-1.5">
                                                                         {cellCommentCount === 1 ? '1 comment' : `${cellCommentCount} comments`}
                                                                     </span>
                                                                 </div>
                                                             ) : (
-                                                                <span className="text-xs text-blue-400 italic">Tap to add comments.</span>
+                                                                <span className="text-xs text-gray-400 italic">
+                                                                    {cell?.permission === 'view' ? '' : 'Tap to add comments.'}
+                                                                </span>
                                                             )}
                                                         </div>
                                                     ) : col.type === 'multi_image' ? (
                                                         <div
-                                                            className="w-full h-full flex items-center px-3 cursor-pointer hover:bg-black/5"
-                                                            onClick={() => handleImageGalleryOpen(row.id, col.id, displayVal)}
+                                                            className="w-full min-h-9 flex items-center px-3 py-1 cursor-pointer hover:bg-black/5"
+                                                            onClick={() => handleImageGalleryOpen(row.id, col.id, displayVal, cell?.permission)}
                                                         >
                                                             {(() => {
                                                                 try {
@@ -1506,27 +1684,74 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                                 }
                                                             })()}
                                                         </div>
+                                                    ) : col.type === 'pdf' ? (
+                                                        <div
+                                                            className="w-full min-h-9 flex items-center px-3 py-1 cursor-pointer hover:bg-black/5"
+                                                            onClick={() => handlePDFGalleryOpen(row.id, col.id, displayVal, cell?.permission)}
+                                                        >
+                                                            {(() => {
+                                                                try {
+                                                                    const docs = JSON.parse(displayVal || '[]');
+                                                                    if (!Array.isArray(docs) || docs.length === 0) {
+                                                                        return <span className="text-gray-400 text-xs italic">No PDFs</span>;
+                                                                    }
+                                                                    return (
+                                                                        <div className="flex items-center gap-2 overflow-hidden w-full py-1">
+                                                                            <div className="relative shrink-0">
+                                                                                <div className="w-8 h-8 rounded bg-red-50 flex items-center justify-center border border-red-100 shadow-sm">
+                                                                                    <FiFileText className="text-red-500 w-4.5 h-4.5" />
+                                                                                </div>
+                                                                                {docs.length > 0 && (
+                                                                                    <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white flex items-center justify-center text-[9px] font-bold shadow-sm border border-white">
+                                                                                        {docs.length}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            <span className="text-xs text-gray-600 whitespace-pre-wrap wrap-break-word font-medium flex-1">
+                                                                                {docs[0].fileName}
+                                                                            </span>
+                                                                        </div>
+                                                                    );
+                                                                } catch (e) {
+                                                                    return <span className="text-red-400 text-xs">Invalid format</span>;
+                                                                }
+                                                            })()}
+                                                        </div>
                                                     ) : col.type === 'date' ? (
-                                                        <input
-                                                            type="date"
-                                                            value={val || ''}
-                                                            onChange={(e) => handleCellChange(row.id, col.id, e.target.value)}
-                                                            onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
-                                                            onBlur={(e) => handleCellBlur(row.id, col.id, e.target.value)}
-                                                            readOnly={cell?.permission === 'view'}
-                                                            className={`w-full h-full absolute inset-0 px-3 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 ${cell?.permission === 'view' ? 'cursor-default' : 'cursor-text'}`}
-                                                        />
+                                                        <div className="min-h-9 flex items-center w-full relative">
+                                                            <input
+                                                                type="date"
+                                                                value={val || ''}
+                                                                onChange={(e) => handleCellChange(row.id, col.id, e.target.value)}
+                                                                onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
+                                                                onBlur={(e) => handleCellBlur(row.id, col.id, e.target.value)}
+                                                                readOnly={cell?.permission === 'view'}
+                                                                className={`w-full px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 ${cell?.permission === 'view' ? 'cursor-default' : 'cursor-text'} ${(cell?.isBold || row.isBold || col.isBold) ? 'font-bold' : ''} ${(cell?.isItalic || row.isItalic || col.isItalic) ? 'italic' : ''}`}
+                                                            />
+                                                        </div>
                                                     ) : (
-                                                        <input
-                                                            type="text"
-                                                            value={displayVal}
-                                                            placeholder={col.type === 'number' || col.type === 'currency' ? '0' : ''}
-                                                            onChange={(e) => !isFormula && handleCellChange(row.id, col.id, e.target.value)}
-                                                            onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
-                                                            onBlur={(e) => !isFormula && handleCellBlur(row.id, col.id, e.target.value)}
-                                                            readOnly={cell?.permission === 'view' || isFormula}
-                                                            className={`w-full h-full absolute inset-0 px-3 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 ${col.type === 'currency' && isFocused ? 'pl-8' : ''} ${cell?.permission === 'view' || isFormula ? 'cursor-default bg-gray-50/30' : 'cursor-text'} ${col.type === 'number' || col.type === 'currency' || isFormula ? 'text-right' : ''}`}
-                                                        />
+                                                        <div className="grid w-full relative">
+                                                            {/* Ghost div to expand height */}
+                                                            <div className={`invisible px-3 py-2 text-[13px] whitespace-pre-wrap wrap-break-word min-h-9 ${(cell?.isBold || row.isBold || col.isBold) ? 'font-bold' : ''} ${(cell?.isItalic || row.isItalic || col.isItalic) ? 'italic' : ''}`}>
+                                                                {displayVal || ' '}
+                                                            </div>
+                                                            <textarea
+                                                                value={displayVal}
+                                                                placeholder={col.type === 'number' || col.type === 'currency' ? '0' : ''}
+                                                                onChange={(e) => !isFormula && handleCellChange(row.id, col.id, e.target.value)}
+                                                                onFocus={() => setFocusedCell({ rowId: row.id, colId: col.id })}
+                                                                onBlur={(e) => !isFormula && handleCellBlur(row.id, col.id, e.target.value)}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                                                        e.preventDefault();
+                                                                        e.currentTarget.blur();
+                                                                    }
+                                                                }}
+                                                                readOnly={cell?.permission === 'view' || isFormula}
+                                                                rows={1}
+                                                                className={`absolute inset-0 w-full h-full px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500 focus:z-10 bg-transparent text-[13px] text-gray-800 resize-none overflow-hidden ${col.type === 'currency' && isFocused ? 'pl-8' : ''} ${cell?.permission === 'view' || isFormula ? 'cursor-default bg-gray-50/30' : 'cursor-text'} ${col.type === 'number' || col.type === 'currency' || isFormula ? 'text-right' : ''} ${(cell?.isBold || row.isBold || col.isBold) ? 'font-bold' : ''} ${(cell?.isItalic || row.isItalic || col.isItalic) ? 'italic' : ''}`}
+                                                            />
+                                                        </div>
                                                     )}
                                                 </td>
                                             );
@@ -1536,21 +1761,14 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 );
                             })
                         )}
+                        {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
+                            <tr className="h-10 hover:bg-gray-50 transition-colors">
+                                <td className="w-12 border-b border-gray-200 bg-gray-50 sticky left-0 z-10"></td>
+                                <td colSpan={columns.length + 1} className="border-b border-gray-200 p-0">
+                                </td>
+                            </tr>
+                        )}
                     </tbody>
-                    {(sheetData?.userPermission === 'admin' || sheetData?.userPermission === 'editor') && (
-                        <tr className="h-10 hover:bg-gray-50 transition-colors">
-                            <td className="w-12 border-b border-gray-200 bg-gray-50 sticky left-0 z-10"></td>
-                            <td colSpan={columns.length + 1} className="border-b border-gray-200 p-0">
-                                {/* <button
-                                    onClick={handleAddRow}
-                                    className="w-full h-full flex items-center px-4 gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium group transition-colors"
-                                >
-                                    <FiPlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                                    Add New Row
-                                </button> */}
-                            </td>
-                        </tr>
-                    )}
                 </table>
 
                 {/* Bottom Calculation Bar */}
@@ -1565,7 +1783,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                     {columns.map((col) => {
                         const mode = columnCalcMode[col.id];
                         const calcValue = mode ? getColumnCalcValue(col.id, mode) : null;
-                        const isNonCalcType = col.type === 'multi_image' || col.type === 'comment' || col.type === 'image';
+                        const isNonCalcType = col.type === 'text' || col.type === 'multi_image' || col.type === 'comment' || col.type === 'image' || col.type === 'pdf' || col.type === 'date';
 
                         return (
                             <div
@@ -1636,47 +1854,131 @@ export default function DocumentEditor({ docName, setActivePath }) {
                     style={{ top: activeCellMenu.y, left: activeCellMenu.x }}
                     className="fixed mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50 text-gray-700 select-none animate-in fade-in zoom-in-95 duration-100"
                 >
-                    <button onClick={() => handleCellAction('cut')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
+                    <button onClick={() => handleCellAction('cut', activeCellMenu.rowIndex, activeCellMenu.colId)} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
                         <FiScissors className="w-4 h-4 text-blue-400" /> Cut
                     </button>
-                    <button onClick={() => handleCellAction('copy')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiCopy className="w-4 h-4 text-blue-400" /> Copy
-                    </button>
-                    <button onClick={() => handleCellAction('copy_column')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiColumns className="w-4 h-4 text-blue-400" /> Copy Column
-                    </button>
-                    <button onClick={() => handleCellAction('copy_row')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiCopy className="w-4 h-4 text-blue-400" /> Copy Row
-                    </button>
-                    <button onClick={() => handleCellAction('add_row_above')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiPlus className="w-4 h-4 text-blue-400" /> Add Row Above
-                    </button>
-                    <button onClick={() => handleCellAction('add_row_below')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiPlus className="w-4 h-4 text-blue-400" /> Add Row Below
-                    </button>
-                    <button onClick={() => handleCellAction('move_row')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiArrowRight className="w-4 h-4 text-blue-400" /> Move Row
-                    </button>
-                    <button onClick={() => handleCellAction('select_multiple_rows')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiList className="w-4 h-4 text-blue-400" /> Select Multiple Rows
-                    </button>
+                    <div className="my-1 border-t border-gray-100"></div>
+
+                    <div className="px-4 py-1.5">
+                        <span className="text-xs font-semibold text-gray-500 mb-2 block">Cell Color</span>
+                        <div className="flex flex-wrap gap-1.5">
+                            {COLOR_PALETTE.map((color) => (
+                                <button
+                                    key={color.name}
+                                    onClick={() => {
+                                        const rowId = filteredRows[activeCellMenu.rowIndex]?.id;
+                                        if (rowId) {
+                                            updateCellStyle(rowId, activeCellMenu.colId, { bgColor: color.value });
+                                        }
+                                        setActiveCellMenu(null);
+                                    }}
+                                    className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200"
+                                    style={{ backgroundColor: color.value || '#fff' }}
+                                    title={color.name}
+                                >
+                                    {!color.value && <FiX className="w-3 h-3 text-gray-400 mx-auto" />}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="px-4 py-1.5 flex gap-2">
+                        <button 
+                            onClick={() => handleCellAction('toggle_bold', activeCellMenu.rowIndex, activeCellMenu.colId)}
+                            className={`p-2 rounded hover:bg-gray-100 border ${filteredRows[activeCellMenu.rowIndex]?.cells?.find(c => c.columnId === activeCellMenu.colId)?.isBold ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-200 text-gray-600'}`}
+                            title="Bold"
+                        >
+                            <FiBold className="w-4 h-4" />
+                        </button>
+                        <button 
+                            onClick={() => handleCellAction('toggle_italic', activeCellMenu.rowIndex, activeCellMenu.colId)}
+                            className={`p-2 rounded hover:bg-gray-100 border ${filteredRows[activeCellMenu.rowIndex]?.cells?.find(c => c.columnId === activeCellMenu.colId)?.isItalic ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-200 text-gray-600'}`}
+                            title="Italic"
+                        >
+                            <FiItalic className="w-4 h-4" />
+                        </button>
+                    </div>
 
                     <div className="my-1 border-t border-gray-100"></div>
-                    <button onClick={() => {
-                        const row = filteredRows[activeCellMenu.rowIndex];
-                        const cell = row?.cells?.find(c => c.columnId === activeCellMenu.colId);
-                        openCommentPanel(cell?.id, row?.id, activeCellMenu.colId);
-                        setActiveCellMenu(null);
-                    }} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                        <FiMessageSquare className="w-4 h-4 text-blue-400" /> Comments
-                    </button>
-                    <div className="my-1 border-t border-gray-100"></div>
-                    <button onClick={() => handleCellAction('erase_data')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors mt-1">
+                    <button onClick={() => handleCellAction('erase_data', activeCellMenu.rowIndex, activeCellMenu.colId)} className="w-full text-left px-4 py-1.5 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors mt-1">
                         <FiDelete className="w-4 h-4 text-red-400" /> Erase Cell Data
                     </button>
-                    <button onClick={() => handleCellAction('delete_row')} className="w-full text-left px-4 py-1.5 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors">
+                    <button onClick={() => handleCellAction('delete_row', activeCellMenu.rowIndex, activeCellMenu.colId)} className="w-full text-left px-4 py-1.5 text-sm hover:bg-red-50 text-red-600 flex items-center gap-3 transition-colors">
                         <FiTrash2 className="w-4 h-4 text-red-400" /> Delete Row
                     </button>
+                </div>
+            )}
+
+            {/* Row Context Menu */}
+            {activeRowMenu && (
+                <div
+                    ref={rowMenuRef}
+                    style={{ top: activeRowMenu.y, left: activeRowMenu.x }}
+                    className="fixed mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50 text-gray-700 select-none animate-in fade-in zoom-in-95 duration-100"
+                >
+                    <button onClick={() => { 
+                        handleCellAction('add_row_above', activeRowMenu.rowIndex, null); 
+                        setActiveRowMenu(null); 
+                    }} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
+                        <FiPlus className="w-4 h-4 text-blue-400" /> Add Row Above
+                    </button>
+                    <button onClick={() => { 
+                        handleCellAction('add_row_below', activeRowMenu.rowIndex, null); 
+                        setActiveRowMenu(null); 
+                    }} className="w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3 transition-colors">
+                        <FiPlus className="w-4 h-4 text-blue-400" /> Add Row Below
+                    </button>
+                    <div className="my-1 border-t border-gray-100"></div>
+                    
+                    <div className="px-4 py-1.5">
+                        <span className="text-xs font-semibold text-gray-500 mb-2 block">Row Color</span>
+                        <div className="flex flex-wrap gap-1.5">
+                            {COLOR_PALETTE.map((color) => (
+                                <button
+                                    key={color.name}
+                                    onClick={() => {
+                                        const rowId = filteredRows[activeRowMenu.rowIndex]?.id;
+                                        if(rowId) {
+                                            updateRowStyle(rowId, { rowColor: color.value });
+                                        }
+                                        setActiveRowMenu(null);
+                                    }}
+                                    className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200"
+                                    style={{ backgroundColor: color.value || '#fff' }}
+                                    title={color.name}
+                                >
+                                    {!color.value && <FiX className="w-3 h-3 text-gray-400 mx-auto" />}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="px-4 py-1.5 flex gap-2">
+                        <button 
+                            onClick={() => {
+                                const row = filteredRows[activeRowMenu.rowIndex];
+                                if (row) updateRowStyle(row.id, { isBold: !row.isBold });
+                                setActiveRowMenu(null);
+                            }}
+                            className={`p-2 rounded hover:bg-gray-100 border ${filteredRows[activeRowMenu.rowIndex]?.isBold ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-200 text-gray-600'}`}
+                            title="Bold Row"
+                        >
+                            <FiBold className="w-4 h-4" />
+                        </button>
+                        <button 
+                            onClick={() => {
+                                const row = filteredRows[activeRowMenu.rowIndex];
+                                if (row) updateRowStyle(row.id, { isItalic: !row.isItalic });
+                                setActiveRowMenu(null);
+                            }}
+                            className={`p-2 rounded hover:bg-gray-100 border ${filteredRows[activeRowMenu.rowIndex]?.isItalic ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-200 text-gray-600'}`}
+                            title="Italic Row"
+                        >
+                            <FiItalic className="w-4 h-4" />
+                        </button>
+                    </div>
+
+
                 </div>
             )}
 
@@ -1714,25 +2016,25 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                 </div>
                             </div>
 
-                            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="flex flex-col gap-2 max-h-52 overflow-y-auto pr-2 custom-scrollbar">
                                 {columnTypes.map(type => (
                                     <div
                                         key={type.id}
                                         onClick={() => setNewColumnType(type.id)}
-                                        className={`flex items-start gap-4 p-4 rounded-xl cursor-pointer transition-all border-2
+                                        className={`flex items-start gap-3 p-2.5 rounded-xl cursor-pointer transition-all border-2
                                             ${newColumnType === type.id
                                                 ? 'border-blue-500 bg-blue-50/50 shadow-sm'
                                                 : 'border-transparent hover:bg-gray-50'}`}
                                     >
-                                        <div className="w-10 h-10 rounded-full bg-white shadow-sm border border-gray-100 flex items-center justify-center shrink-0">
+                                        <div className="w-8 h-8 rounded-full bg-white shadow-sm border border-gray-100 flex items-center justify-center shrink-0">
                                             {type.icon}
                                         </div>
                                         <div className="flex-1">
-                                            <h4 className="font-semibold text-gray-900 leading-tight">{type.name}</h4>
+                                            <h4 className="font-semibold text-gray-900 text-sm leading-tight">{type.name}</h4>
                                             <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{type.desc}</p>
                                         </div>
-                                        <div className="w-5 h-5 rounded-full border-2 border-gray-300 flex items-center justify-center shrink-0 mt-0.5 transition-colors">
-                                            <div className={`w-2.5 h-2.5 rounded-full transition-transform ${newColumnType === type.id ? 'bg-blue-500 scale-100' : 'scale-0'}`} />
+                                        <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex items-center justify-center shrink-0 mt-0.5 transition-colors">
+                                            <div className={`w-2 h-2 rounded-full transition-transform ${newColumnType === type.id ? 'bg-blue-500 scale-100' : 'scale-0'}`} />
                                         </div>
                                     </div>
                                 ))}
@@ -1754,40 +2056,29 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                         </button>
                                     ))}
                                 </div>
-
-                                <label className="flex items-center gap-3 cursor-pointer mt-4 group">
-                                    <div
-                                        onClick={() => setNewColumnIsRowColorSource(!newColumnIsRowColorSource)}
-                                        className={`w-10 h-5 rounded-full relative transition-colors ${newColumnIsRowColorSource ? 'bg-blue-500' : 'bg-gray-300'}`}
-                                    >
-                                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${newColumnIsRowColorSource ? 'left-6' : 'left-1'}`} />
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-semibold text-gray-700">Apply this color to the whole row</span>
-                                        <span className="text-[10px] text-gray-500">Row background will match this column's color</span>
-                                    </div>
-                                </label>
                             </div>
 
-                            {(newColumnType === 'currency' || newColumnType === 'formula') && (
-                                <div className="space-y-1.5 mt-4">
-                                    <label className="block text-sm font-semibold text-gray-700">Currency Code (if applicable)</label>
-                                    <div className="relative">
-                                        <select
-                                            value={newColumnCurrencyCode}
-                                            onChange={(e) => setNewColumnCurrencyCode(e.target.value)}
-                                            className="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-gray-50/50 appearance-none text-sm text-gray-700"
-                                        >
-                                            {SUPPORTED_CURRENCIES.map(curr => (
-                                                <option key={curr.code} value={curr.code}>
-                                                    {curr.code} ({curr.symbol}) - {curr.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <FiChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                                    </div>
+                            <div className="space-y-3 mt-4 pt-4 border-t border-gray-100">
+                                <label className="block text-sm font-semibold text-gray-700">Font Style</label>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setNewColumnIsBold(!newColumnIsBold)}
+                                        className={`p-2 rounded hover:bg-gray-100 border transition-colors ${newColumnIsBold ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-200 text-gray-600'}`}
+                                        title="Bold Column"
+                                    >
+                                        <FiBold className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                        onClick={() => setNewColumnIsItalic(!newColumnIsItalic)}
+                                        className={`p-2 rounded hover:bg-gray-100 border transition-colors ${newColumnIsItalic ? 'bg-blue-50 border-blue-200 text-blue-600' : 'border-gray-200 text-gray-600'}`}
+                                        title="Italic Column"
+                                    >
+                                        <FiItalic className="w-4 h-4" />
+                                    </button>
                                 </div>
-                            )}
+                            </div>
+
+
                         </div>
 
                         {/* Modal Footer */}
@@ -1823,7 +2114,6 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                     setIsFormulaModalOpen(false);
                                     setFormulaString('');
                                     setPendingFormulaColumnDesc(null);
-                                    setIsColumnModalOpen(true); // Go back to first modal
                                 }}
                                 className="text-gray-400 hover:text-gray-600 transition-colors"
                             >
@@ -1851,7 +2141,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                         Add column values to formula by clicking column names from below list:
                                     </div>
                                     <div className="flex-col overflow-y-auto max-h-56 pr-2 space-y-1.5 custom-scrollbar">
-                                        {columns.map((col, idx) => {
+                                        {columns.filter(col => col.type === 'number' || col.type === 'currency').map((col, idx) => {
                                             if (col.id === pendingFormulaColumnDesc.id) return null; // Don't allow self-reference
 
                                             // Calculate A1 notation for this column (e.g., A, B, C...)
@@ -1911,7 +2201,8 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                     setIsFormulaModalOpen(false);
                                     setFormulaString('');
                                     setPendingFormulaColumnDesc(null);
-                                    setIsColumnModalOpen(true);
+                                    // Only go back to column modal if we came from it (new column flow)
+                                    // Don't open it if Formula Builder was launched directly from column dropdown
                                 }}
                                 className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-200 bg-white rounded-lg transition-colors border border-gray-200 shadow-sm"
                             >
@@ -1947,7 +2238,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
 
             {/* Image Gallery Modal */}
             {isImageGalleryOpen && activeImageCell && (
-                <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 sm:p-6">
+                <div className="fixed inset-0 bg-black/60 z-60 flex items-center justify-center p-4 sm:p-6">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col h-[85vh]">
                         {/* Header */}
                         <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50/50 shrink-0">
@@ -1973,26 +2264,30 @@ export default function DocumentEditor({ docName, setActivePath }) {
                             ) : (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                     {activeImageCell.images.map((img, index) => (
-                                        <div key={index} className="group relative aspect-square bg-gray-100 rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                            <a href={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${img.url}`} target="_blank" rel="noreferrer" className="block w-full h-full">
-                                                <img
-                                                    src={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${img.url}`}
-                                                    alt={img.fileName || 'Cell Image'}
-                                                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                                    loading="lazy"
-                                                />
-                                            </a>
+                                        <div 
+                                            key={index} 
+                                            className="group relative aspect-square bg-gray-100 rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-zoom-in"
+                                            onClick={() => setSelectedPreviewImage(`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${img.url}`)}
+                                        >
+                                            <img
+                                                src={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${img.url}`}
+                                                alt={img.fileName || 'Cell Image'}
+                                                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                                loading="lazy"
+                                            />
                                             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2 pt-6 opacity-0 group-hover:opacity-100 transition-opacity flex justify-between items-end">
                                                 <div className="text-[10px] text-white/90 truncate pr-2">
                                                     {img.fileName}
                                                 </div>
-                                                <button
-                                                    onClick={(e) => { e.preventDefault(); handleDeleteImage(index); }}
-                                                    className="text-red-400 hover:text-red-300 bg-white/10 rounded p-1 backdrop-blur-sm shrink-0"
-                                                    title="Delete image"
-                                                >
-                                                    <FiTrash2 className="w-3.5 h-3.5" />
-                                                </button>
+                                                {activeImageCell.permission !== 'view' && (
+                                                    <button
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteImage(index); }}
+                                                        className="text-red-400 hover:text-red-300 bg-white/10 rounded p-1 backdrop-blur-sm shrink-0"
+                                                        title="Delete image"
+                                                    >
+                                                        <FiTrash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     ))}
@@ -2001,46 +2296,157 @@ export default function DocumentEditor({ docName, setActivePath }) {
                         </div>
 
                         {/* Footer Upload Area */}
-                        <div className="p-4 border-t border-gray-100 bg-white shrink-0">
-                            <div className="flex items-center gap-4">
-                                <label className="flex-1 flex items-center justify-center gap-2 py-3 px-4 border-2 border-dashed border-gray-300 rounded-xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-colors cursor-pointer text-gray-500 font-medium group">
-                                    {isUploadingImages ? (
-                                        <>
-                                            <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
-                                            Uploading...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <FiUploadCloud className="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" />
-                                            Upload Images
-                                            <input
-                                                type="file"
-                                                multiple
-                                                accept="image/*"
-                                                className="hidden"
-                                                ref={fileInputRef}
-                                                onChange={handleImagesSelected}
-                                            />
-                                        </>
-                                    )}
-                                </label>
+                        {activeImageCell.permission !== 'view' && (
+                            <div className="p-4 border-t border-gray-100 bg-white shrink-0">
+                                <div className="flex items-center gap-4">
+                                    <label className="flex-1 flex items-center justify-center gap-2 py-3 px-4 border-2 border-dashed border-gray-300 rounded-xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-colors cursor-pointer text-gray-500 font-medium group">
+                                        {isUploadingImages ? (
+                                            <>
+                                                <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                Uploading...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <FiUploadCloud className="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" />
+                                                Upload Images
+                                                <input
+                                                    type="file"
+                                                    multiple
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    ref={fileInputRef}
+                                                    onChange={handleImagesSelected}
+                                                />
+                                            </>
+                                        )}
+                                    </label>
+                                </div>
+                                <p className="text-center text-xs text-gray-400 mt-2">
+                                    Accepts multiple images. Max 50MB per file.
+                                </p>
                             </div>
-                            <p className="text-center text-xs text-gray-400 mt-2">
-                                Accepts multiple images. Max 50MB per file.
-                            </p>
-                        </div>
+                        )}
                     </div>
                 </div>
             )}
+            {/* PDF Gallery Modal */}
+            {isPDFGalleryOpen && activePDFCell && (
+                <div className="fixed inset-0 bg-black/60 z-60 flex items-center justify-center p-4 sm:p-6" onClick={() => setIsPDFGalleryOpen(false)}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col h-[70vh]" onClick={(e) => e.stopPropagation()}>
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50/50 shrink-0">
+                            <h2 className="font-semibold text-gray-800 text-lg flex items-center gap-2">
+                                <FiFileText className="text-red-500" />
+                                PDF Documents <span className="text-gray-400 text-sm font-normal">({activePDFCell.documents?.length || 0} files)</span>
+                            </h2>
+                            <button
+                                onClick={() => setIsPDFGalleryOpen(false)}
+                                className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                            >
+                                <FiX className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Content Area - List View for PDFs */}
+                        <div className="flex-1 overflow-y-auto p-4 bg-gray-50/30">
+                            {activePDFCell.documents?.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-3">
+                                    <FiFileText className="w-16 h-16 text-gray-200" />
+                                    <p>No PDF documents in this cell</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {activePDFCell.documents.map((doc, index) => (
+                                        <div 
+                                            key={index} 
+                                            className="group flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-red-200 transition-all"
+                                        >
+                                            <div className="flex items-center gap-3 overflow-hidden">
+                                                <div className="w-10 h-10 rounded bg-red-50 flex items-center justify-center shrink-0 border border-red-100">
+                                                    <FiFileText className="text-red-500 w-5 h-5" />
+                                                </div>
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className="text-sm font-medium text-gray-700 truncate" title={doc.fileName}>
+                                                        {doc.fileName}
+                                                    </span>
+                                                    <span className="text-[10px] text-gray-400">
+                                                        {(doc.fileSize / 1024 / 1024).toFixed(2)} MB • {new Date(doc.uploadedAt).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2 ml-4">
+                                                <a
+                                                    href={`${import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:6041'}${doc.url}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                                                    title="View PDF"
+                                                >
+                                                    <FiExternalLink className="w-4 h-4" />
+                                                </a>
+                                                {activePDFCell.permission !== 'view' && (
+                                                    <button
+                                                        onClick={() => handleDeletePDF(index)}
+                                                        className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                        title="Delete"
+                                                    >
+                                                        <FiTrash2 className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer Upload Area */}
+                        {activePDFCell.permission !== 'view' && (
+                            <div className="p-4 border-t border-gray-100 bg-white shrink-0">
+                                <div className="flex items-center gap-4">
+                                    <label className="flex-1 flex items-center justify-center gap-2 py-3 px-4 border-2 border-dashed border-gray-300 rounded-xl hover:bg-red-50 hover:border-red-400 hover:text-red-600 transition-colors cursor-pointer text-gray-500 font-medium group">
+                                        {isUploadingPDFs ? (
+                                            <>
+                                                <svg className="animate-spin h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                Uploading PDFs...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <FiUploadCloud className="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" />
+                                                Upload PDFs
+                                                <input
+                                                    type="file"
+                                                    multiple
+                                                    accept="application/pdf"
+                                                    className="hidden"
+                                                    ref={pdfInputRef}
+                                                    onChange={handlePDFsSelected}
+                                                />
+                                            </>
+                                        )}
+                                    </label>
+                                </div>
+                                <p className="text-center text-xs text-gray-400 mt-2">
+                                    Only PDF files are accepted. Max 50MB per file.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
 
             {/* ── Comment Panel Modal ──────────────────────────────────────── */}
             {commentPanelCell && (
                 <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4" onClick={closeCommentPanel}>
                     <div
-                        className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]"
+                        className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col h-[400px] max-h-[85vh]"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Header */}
@@ -2055,7 +2461,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                         </div>
 
                         {/* Comments Thread */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[200px]">
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
                             {commentsLoading ? (
                                 <div className="flex justify-center items-center h-32">
                                     <svg className="animate-spin h-6 w-6 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -2070,7 +2476,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                     <p className="text-xs text-gray-300 mt-1">Be the first to add a comment</p>
                                 </div>
                             ) : (
-                                commentsList.map(comment => {
+                                [...commentsList].reverse().map(comment => {
                                     const isOwner = currentUser?.id === comment.userId;
                                     const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
                                     const isEditing = editingComment?.id === comment.id;
@@ -2094,7 +2500,7 @@ export default function DocumentEditor({ docName, setActivePath }) {
                                                             <span className="text-[10px] text-gray-300 italic">(edited)</span>
                                                         )}
                                                         {/* Edit / Delete buttons */}
-                                                        {(isOwner || isAdmin) && !isEditing && (
+                                                        {(isOwner || isAdmin) && !isEditing && commentPanelCell.permission !== 'view' && (
                                                             <div className="flex items-center gap-1 ml-auto">
                                                                 {isOwner && (
                                                                     <button
@@ -2153,35 +2559,37 @@ export default function DocumentEditor({ docName, setActivePath }) {
                         </div>
 
                         {/* Add Comment Input */}
-                        <div className="p-4 border-t border-gray-100 bg-gray-50/50 shrink-0">
-                            <div className="flex items-end gap-2">
-                                <textarea
-                                    value={newCommentText}
-                                    onChange={(e) => setNewCommentText(e.target.value)}
-                                    placeholder="Type your comment here..."
-                                    className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none bg-white transition-all placeholder-gray-400"
-                                    rows={2}
-                                    maxLength={2000}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
-                                />
-                                <button
-                                    onClick={handleAddComment}
-                                    disabled={!newCommentText.trim() || commentSubmitting}
-                                    className="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-colors shadow-sm flex items-center gap-1.5 text-sm font-medium shrink-0"
-                                >
-                                    {commentSubmitting ? (
-                                        <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                    ) : (
-                                        <FiSend className="w-4 h-4" />
-                                    )}
-                                    Add
-                                </button>
+                        {commentPanelCell.permission !== 'view' && (
+                            <div className="p-4 border-t border-gray-100 bg-gray-50/50 shrink-0">
+                                <div className="flex items-end gap-2">
+                                    <textarea
+                                        value={newCommentText}
+                                        onChange={(e) => setNewCommentText(e.target.value)}
+                                        placeholder="Type your comment here..."
+                                        className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none bg-white transition-all placeholder-gray-400"
+                                        rows={2}
+                                        maxLength={2000}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
+                                    />
+                                    <button
+                                        onClick={handleAddComment}
+                                        disabled={!newCommentText.trim() || commentSubmitting}
+                                        className="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-colors shadow-sm flex items-center gap-1.5 text-sm font-medium shrink-0"
+                                    >
+                                        {commentSubmitting ? (
+                                            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                        ) : (
+                                            <FiSend className="w-4 h-4" />
+                                        )}
+                                        Add
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-gray-400 mt-1.5 ml-1">Press Enter to submit, Shift+Enter for new line</p>
                             </div>
-                            <p className="text-[11px] text-gray-400 mt-1.5 ml-1">Press Enter to submit, Shift+Enter for new line</p>
-                        </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -2191,6 +2599,168 @@ export default function DocumentEditor({ docName, setActivePath }) {
                 onClose={() => setIsShareModalOpen(false)}
                 sheetId={docName}
             />
+
+            {/* Image Zoom/Preview Modal */}
+            {selectedPreviewImage && (
+                <div 
+                    className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4 sm:p-10 cursor-zoom-out"
+                    onClick={() => setSelectedPreviewImage(null)}
+                >
+                    <button 
+                        className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors"
+                        onClick={() => setSelectedPreviewImage(null)}
+                    >
+                        <FiX className="w-8 h-8" />
+                    </button>
+                    <img 
+                        src={selectedPreviewImage} 
+                        className="max-w-full max-h-full object-contain shadow-2xl rounded-sm"
+                        alt="Zoomed Preview"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            )}
+            <ColumnUpdateConfirmModal 
+                isOpen={showUpdateConfirmModal}
+                onClose={() => setShowUpdateConfirmModal(false)}
+                onConfirm={performUpdateColumn}
+                columnName={newColumnName}
+                isEdit={!!editingColId}
+                isTypeChanged={!!(editingColId && columns.find(c => c.id === editingColId)?.type !== newColumnType)}
+            />
+            <ColumnDeleteConfirmModal 
+                isOpen={showDeleteConfirmModal}
+                onClose={() => setShowDeleteConfirmModal(false)}
+                onConfirm={performDeleteColumn}
+                columnName={columnToDelete?.name}
+            />
         </div>
     );
 }
+
+const ColumnUpdateConfirmModal = ({ isOpen, onClose, onConfirm, columnName, isEdit, isTypeChanged }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
+            {/* Glass Backdrop */}
+            <div 
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300"
+                onClick={onClose}
+            ></div>
+
+            {/* Modal Content */}
+            <div className="relative w-full max-w-sm bg-[#1a1c23] border border-white/10 rounded-2xl shadow-2xl p-6 overflow-hidden animate-in fade-in zoom-in duration-300">
+                {/* Decorative background element */}
+                <div className="absolute top-0 right-0 -mr-6 -mt-6 w-24 h-24 bg-blue-500/10 blur-2xl rounded-full"></div>
+                <div className="absolute bottom-0 left-0 -ml-6 -mb-6 w-24 h-24 bg-indigo-500/10 blur-2xl rounded-full"></div>
+
+                <div className="flex flex-col items-center text-center space-y-4">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center ${isTypeChanged ? 'bg-red-500/10' : 'bg-blue-500/10'}`}>
+                        <FiAlertCircle className={`w-8 h-8 ${isTypeChanged ? 'text-red-500' : 'text-blue-500'}`} />
+                    </div>
+
+                    <div className="space-y-2">
+                        <h3 className="text-xl font-bold text-white tracking-tight">
+                            {isEdit ? 'Rename/Edit Column' : 'Add New Column'}
+                        </h3>
+                        <div className="text-gray-400 text-sm leading-relaxed space-y-3">
+                            <p>
+                                {isEdit 
+                                    ? `Are you sure you want to save the changes for "${columnName}"?`
+                                    : `Are you sure you want to add the column "${columnName}" to this spreadsheet?`
+                                }
+                            </p>
+                            {isTypeChanged && (
+                                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+                                    <p className="text-red-400 font-semibold animate-pulse">
+                                        ⚠️ WARNING: Changing the column type will PERMANENTLY delete all existing data in this column.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex w-full gap-3 mt-4">
+                        <button
+                            onClick={onClose}
+                            className="flex-1 py-3 px-4 rounded-xl border border-white/10 text-gray-300 font-semibold hover:bg-white/5 hover:text-white transition-all transform hover:scale-[1.02] active:scale-95"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={onConfirm}
+                            className="flex-1 py-3 px-4 rounded-xl bg-linear-to-r from-blue-600 to-blue-500 text-white font-semibold shadow-lg shadow-blue-900/40 hover:from-blue-500 hover:to-blue-400 transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"
+                        >
+                            Confirm
+                        </button>
+                    </div>
+                </div>
+
+                <button 
+                    onClick={onClose}
+                    className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
+                >
+                    <FiX className="w-5 h-5" />
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const ColumnDeleteConfirmModal = ({ isOpen, onClose, onConfirm, columnName }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
+            {/* Glass Backdrop */}
+            <div 
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300"
+                onClick={onClose}
+            ></div>
+
+            {/* Modal Content */}
+            <div className="relative w-full max-w-sm bg-[#1a1c23] border border-white/10 rounded-2xl shadow-2xl p-6 overflow-hidden animate-in fade-in zoom-in duration-300">
+                {/* Decorative background element */}
+                <div className="absolute top-0 right-0 -mr-6 -mt-6 w-24 h-24 bg-red-500/10 blur-2xl rounded-full"></div>
+                <div className="absolute bottom-0 left-0 -ml-6 -mb-6 w-24 h-24 bg-indigo-500/10 blur-2xl rounded-full"></div>
+
+                <div className="flex flex-col items-center text-center space-y-4">
+                    <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center">
+                        <FiTrash2 className="w-8 h-8 text-red-500" />
+                    </div>
+
+                    <div className="space-y-2">
+                        <h3 className="text-xl font-bold text-white tracking-tight">Delete Column</h3>
+                        <p className="text-gray-400 text-sm leading-relaxed">
+                            Are you sure you want to permanently delete the column <span className="text-white font-semibold">"{columnName}"</span>? <br />
+                            <span className="text-red-400/80 font-medium">This action cannot be undone and all data will be lost.</span>
+                        </p>
+                    </div>
+
+                    <div className="flex w-full gap-3 mt-4">
+                        <button
+                            onClick={onClose}
+                            className="flex-1 py-3 px-4 rounded-xl border border-white/10 text-gray-300 font-semibold hover:bg-white/5 hover:text-white transition-all transform hover:scale-[1.02] active:scale-95"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={onConfirm}
+                            className="flex-1 py-3 px-4 rounded-xl bg-linear-to-r from-red-600 to-red-500 text-white font-semibold shadow-lg shadow-red-900/40 hover:from-red-500 hover:to-red-400 transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"
+                        >
+                            Delete Now
+                        </button>
+                    </div>
+                </div>
+
+                <button 
+                    onClick={onClose}
+                    className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
+                >
+                    <FiX className="w-5 h-5" />
+                </button>
+            </div>
+        </div>
+    );
+};

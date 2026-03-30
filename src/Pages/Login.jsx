@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { FiMail, FiLock, FiArrowRight } from 'react-icons/fi';
+import { FiMail, FiLock, FiArrowRight, FiEye, FiEyeOff } from 'react-icons/fi';
+import { LuFileSpreadsheet } from 'react-icons/lu';
 import apiClient from '../api/apiClient';
 const FloatingCharacters = () => {
     const characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ012345678901234567890+−×÷₹+−×÷₹';
@@ -51,6 +52,7 @@ const FloatingCharacters = () => {
 export default function Login({ setActivePath }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -86,14 +88,11 @@ export default function Login({ setActivePath }) {
 
                 <div className="relative z-10 max-w-xl mx-auto w-full">
                     <div className="flex items-center gap-4 mb-14">
-                        <div className="h-12 w-12 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20">
-                            <svg width="24" height="24" fill="none" stroke="white" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                    d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                            </svg>
+                        <div className="h-12 w-12 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-teal-500/20 text-white">
+                            <LuFileSpreadsheet size={24} />
                         </div>
                         <div>
-                            <h1 className="font-bold text-2xl tracking-tight">Datarithm</h1>
+                            <h1 className="font-bold text-2xl tracking-tight">Datsheets</h1>
                             <p className="text-sm text-gray-400">Enterprise Desk</p>
                         </div>
                     </div>
@@ -170,13 +169,20 @@ export default function Login({ setActivePath }) {
                                         <FiLock className="text-gray-400" size={18} />
                                     </div>
                                     <input
-                                        type="password"
-                                        className="block w-full pl-11 pr-4 py-3 border border-gray-200 bg-white rounded-xl focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none transition-all shadow-sm text-gray-900 font-medium"
+                                        type={showPassword ? "text" : "password"}
+                                        className="block w-full pl-11 pr-12 py-3 border border-gray-200 bg-white rounded-xl focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none transition-all shadow-sm text-gray-900 font-medium"
                                         placeholder="Enter your password"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                         required
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-indigo-600 transition-colors"
+                                    >
+                                        {showPassword ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+                                    </button>
                                 </div>
                             </div>
 

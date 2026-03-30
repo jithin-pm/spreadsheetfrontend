@@ -1,4 +1,4 @@
-import { FiMenu, FiSearch, FiEdit } from "react-icons/fi";
+import { FiMenu, FiSearch, FiEdit, FiMic, FiImage, FiFileText } from "react-icons/fi";
 import { useState, useEffect, useRef } from "react";
 import { io as socketIO } from "socket.io-client";
 import ChatWindow from "../Components/ChatWindow";
@@ -29,7 +29,6 @@ export default function Messages({ setMobileOpen }) {
         console.log("Connecting to Socket at:", SOCKET_URL);
         const socket = socketIO(SOCKET_URL, {
             auth: { token },
-            transports: ['websocket', 'polling'],
             reconnection: true,
             reconnectionAttempts: 5
         });
@@ -46,13 +45,15 @@ export default function Messages({ setMobileOpen }) {
         // Receive full list of online users on connect
         socket.on("online_users", (userIds) => {
             console.log("Online users received:", userIds);
-            setOnlineUserIds(new Set(userIds.map(id => String(id))));
+            // Handle both array of strings and array of objects {userId: ...}
+            const ids = userIds.map(id => typeof id === 'object' && id !== null ? String(id.userId || id.id).toLowerCase() : String(id).toLowerCase());
+            setOnlineUserIds(new Set(ids));
         });
 
         // Real-time status updates
         socket.on("user_status", ({ userId, status }) => {
             console.log(`User ${userId} is now ${status}`);
-            const sId = String(userId);
+            const sId = String(userId).toLowerCase();
             setOnlineUserIds(prev => {
                 const next = new Set(prev);
                 if (status === "online") {
@@ -93,11 +94,9 @@ export default function Messages({ setMobileOpen }) {
                     id: partner.id,
                     name: partner.name,
                     avatar: partner.avatar,
-                    lastMessage: msg.fileUrl 
-                        ? (msg.fileType === 'audio' ? '🎤 Audio Message' 
-                           : msg.fileType === 'image' ? '📷 Image' 
-                           : '📄 Document') 
-                        : msg.message,
+                    lastMessage: msg.message,
+                    fileUrl: msg.fileUrl,
+                    fileType: msg.fileType,
                     time: timeStr,
                     unread: msg.unreadCount,
                     isOnline: false, // will be updated below
@@ -180,7 +179,7 @@ export default function Messages({ setMobileOpen }) {
                                                         {conv.name?.charAt(0) || "U"}
                                                     </div>
                                                 )}
-                                                {onlineUserIds.has(String(conv.id)) && (
+                                                {onlineUserIds.has(String(conv.id).toLowerCase()) && (
                                                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
                                                 )}
                                             </div>
@@ -196,11 +195,28 @@ export default function Messages({ setMobileOpen }) {
                                                     )}
                                                 </div>
                                                 <div className="flex items-center justify-between">
-                                                    <p className={`text-sm truncate ${conv.unread > 0 ? 'font-semibold text-gray-800' : 'text-gray-500'}`}>
-                                                        {conv.hasConversation ? conv.lastMessage : (
+                                                    <div className={`text-sm truncate flex items-center gap-1.5 ${conv.unread > 0 ? 'font-semibold text-gray-800' : 'text-gray-500'}`}>
+                                                        {conv.hasConversation ? (
+                                                            <>
+                                                                {conv.fileUrl && (
+                                                                    <>
+                                                                        {conv.fileType === 'audio' && <FiMic className="w-3.5 h-3.5 shrink-0 text-blue-500" />}
+                                                                        {conv.fileType === 'image' && <FiImage className="w-3.5 h-3.5 shrink-0 text-blue-500" />}
+                                                                        {(conv.fileType === 'file' || conv.fileType === 'text') && conv.fileUrl && !conv.lastMessage && <FiFileText className="w-3.5 h-3.5 shrink-0 text-blue-500" />}
+                                                                    </>
+                                                                )}
+                                                                <span className="truncate">
+                                                                    {conv.fileUrl && !conv.lastMessage 
+                                                                        ? (conv.fileType === 'audio' ? 'Audio Message' 
+                                                                           : conv.fileType === 'image' ? 'Image' 
+                                                                           : 'Document') 
+                                                                        : conv.lastMessage}
+                                                                </span>
+                                                            </>
+                                                        ) : (
                                                             <span className="text-indigo-500 hover:text-indigo-600 font-medium">Start new conversation</span>
                                                         )}
-                                                    </p>
+                                                    </div>
                                                     {conv.unread > 0 && (
                                                         <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0 ml-2">
                                                             {conv.unread}
@@ -222,14 +238,21 @@ export default function Messages({ setMobileOpen }) {
                         </div>
                     </div>
                     {/* Chat Area */}
-                    {selectedUser && (
-                        <ChatWindow
-                            socket={socketRef.current}
-                            selectedUser={{...selectedUser, isOnline: onlineUserIds.has(String(selectedUser.id))}}
-                            setSelectedUser={setSelectedUser}
-                            onMessageSent={fetchInbox}
-                        />
-                    )}
+                    {selectedUser && (() => {
+                        console.log("DEBUG: Checking selectedUser online status.", {
+                            selectedUserId: selectedUser.id,
+                            onlineSet: Array.from(onlineUserIds),
+                            isMatch: onlineUserIds.has(String(selectedUser.id).toLowerCase())
+                        });
+                        return (
+                            <ChatWindow
+                                socket={socketRef.current}
+                                selectedUser={{...selectedUser, isOnline: onlineUserIds.has(String(selectedUser.id).toLowerCase())}}
+                                setSelectedUser={setSelectedUser}
+                                onMessageSent={fetchInbox}
+                            />
+                        );
+                    })()}
                 </div>
             </div>
 
